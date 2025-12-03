@@ -1,5 +1,5 @@
 
-import React from 'react';
+import React, { useState } from 'react';
 import { UserRole, ServiceRequest, Quote, Conversation } from '../types';
 
 interface DashboardProps {
@@ -15,8 +15,6 @@ interface DashboardProps {
   onIgnoreRequest?: (requestId: string) => void;
   onViewQuote?: (quote: Quote) => void;
   onDeleteRequest?: (requestId: string) => void;
-  onViewTrash?: () => void;
-  deletedCount?: number;
 }
 
 const RequestStatusStepper = ({ status }: { status: ServiceRequest['status'] }) => {
@@ -76,7 +74,19 @@ const RequestStatusStepper = ({ status }: { status: ServiceRequest['status'] }) 
   );
 };
 
-const Dashboard: React.FC<DashboardProps> = ({ role, requests, conversations = [], currentProviderId, onViewProvider, onAcceptQuote, onChatWithProvider, onChatWithUser, onSubmitQuote, onIgnoreRequest, onViewQuote, onDeleteRequest, onViewTrash, deletedCount = 0 }) => {
+const Dashboard: React.FC<DashboardProps> = ({ role, requests, conversations = [], currentProviderId, onViewProvider, onAcceptQuote, onChatWithProvider, onChatWithUser, onSubmitQuote, onIgnoreRequest, onViewQuote, onDeleteRequest }) => {
+  const [expandedRequestIds, setExpandedRequestIds] = useState<Set<string>>(new Set());
+
+  const toggleExpand = (requestId: string) => {
+    const newSet = new Set(expandedRequestIds);
+    if (newSet.has(requestId)) {
+      newSet.delete(requestId);
+    } else {
+      newSet.add(requestId);
+    }
+    setExpandedRequestIds(newSet);
+  };
+
   if (role === UserRole.PROVIDER) {
     // Separate requests into "New Opportunities" (Leads) and "My Quotes"
     const newLeads = requests.filter(r => 
@@ -91,7 +101,6 @@ const Dashboard: React.FC<DashboardProps> = ({ role, requests, conversations = [
 
     // Calculate real-time stats
     const activeLeadsCount = newLeads.length;
-    // const pendingQuotesCount = myQuotes.filter(r => r.status === 'quoted').length;
     
     // Calculate revenue: Sum of prices of accepted/closed quotes for this provider
     const revenue = myQuotes.reduce((total, req) => {
@@ -260,16 +269,6 @@ const Dashboard: React.FC<DashboardProps> = ({ role, requests, conversations = [
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-gray-900">My Requests</h1>
-        {onViewTrash && (
-          <button 
-            onClick={onViewTrash}
-            className="flex items-center gap-2 text-gray-500 hover:text-dubai-gold transition-colors px-3 py-1.5 rounded-lg hover:bg-yellow-50"
-            title="View Deleted Requests"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-            <span className="text-sm font-medium">Trash ({deletedCount})</span>
-          </button>
-        )}
       </div>
       
       {requests.length === 0 ? (
@@ -284,9 +283,10 @@ const Dashboard: React.FC<DashboardProps> = ({ role, requests, conversations = [
         <div className="space-y-6">
           {requests.map(req => {
             const isRequestClosed = req.status === 'closed';
+            const isExpanded = expandedRequestIds.has(req.id);
 
             return (
-              <div key={req.id} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+              <div key={req.id} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden transition-all duration-300">
                 <div className="p-6 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
                   <div>
                     <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
@@ -296,6 +296,15 @@ const Dashboard: React.FC<DashboardProps> = ({ role, requests, conversations = [
                             <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
                             {req.locality}
                           </span>
+                       )}
+                       {!isExpanded && (
+                         <span className={`text-xs px-2 py-0.5 rounded-full font-bold uppercase tracking-wide ml-2 ${
+                            req.status === 'open' ? 'bg-blue-100 text-blue-700' :
+                            req.status === 'quoted' ? 'bg-dubai-gold/20 text-yellow-700' :
+                            req.status === 'accepted' ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-600'
+                         }`}>
+                           {req.status}
+                         </span>
                        )}
                     </h3>
                     <p className="text-sm text-gray-500 mt-1">
@@ -307,122 +316,151 @@ const Dashboard: React.FC<DashboardProps> = ({ role, requests, conversations = [
                         <div className="text-2xl font-bold text-dubai-blue">{req.quotes.length}</div>
                         <div className="text-xs text-gray-500 uppercase tracking-wide">Quotes Received</div>
                      </div>
-                     {(req.status === 'open' || req.status === 'quoted') && (
-                       <button 
-                          onClick={() => {
-                             if(onDeleteRequest && window.confirm('Are you sure you want to delete this request?')) {
-                                onDeleteRequest(req.id);
-                             }
-                          }}
-                          className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"
-                          title="Delete Request"
-                       >
-                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                       </button>
-                     )}
+                     <div className="flex items-center gap-2 border-l border-gray-200 pl-4 ml-2">
+                        <button
+                           type="button"
+                           onClick={() => toggleExpand(req.id)}
+                           className="text-xs font-medium text-gray-500 hover:text-dubai-blue flex items-center gap-1 transition-colors px-3 py-2 rounded-md hover:bg-gray-100"
+                        >
+                           {isExpanded ? 'Hide Details' : 'View Details'}
+                           <svg className={`w-4 h-4 transform transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                           </svg>
+                        </button>
+                        
+                        {/* Delete Button - Strictly Isolated */}
+                        <div className="relative group z-10">
+                            <button 
+                                type="button"
+                                onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation(); // Critical to stop propagation
+                                    if (window.confirm('PERMANENTLY DELETE?\n\nAre you sure you want to delete this request? This action cannot be undone.')) {
+                                        if (onDeleteRequest) onDeleteRequest(req.id);
+                                    }
+                                }}
+                                className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-all border border-transparent hover:border-red-100"
+                                title="Delete Permanently"
+                                aria-label="Delete Request"
+                            >
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                            </button>
+                        </div>
+                     </div>
                   </div>
                 </div>
                 
-                {/* Progress Stepper */}
-                <RequestStatusStepper status={req.status} />
+                {/* Expandable Details Section */}
+                {isExpanded && (
+                  <div className="animate-in slide-in-from-top-2 duration-300">
+                     {/* Description */}
+                     <div className="px-8 py-4 bg-gray-50/50 border-b border-gray-100">
+                        <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Description</h4>
+                        <p className="text-gray-700 text-sm leading-relaxed max-w-3xl">{req.description}</p>
+                     </div>
 
-                <div className="p-6 pt-2">
-                  <h4 className="text-sm font-semibold text-gray-900 mb-4 uppercase tracking-wider">Compare Quotes</h4>
-                  {req.quotes.length > 0 ? (
-                    <div className="overflow-x-auto">
-                      <table className="min-w-full divide-y divide-gray-200">
-                        <thead className="bg-gray-50">
-                          <tr>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Provider</th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Price (AED)</th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Timeline</th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rating</th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Action</th>
-                          </tr>
-                        </thead>
-                        <tbody className="bg-white divide-y divide-gray-200">
-                          {req.quotes.map(quote => (
-                            <tr key={quote.id} className={isRequestClosed && quote.status !== 'accepted' ? 'opacity-50' : ''}>
-                              <td className="px-6 py-4 whitespace-nowrap">
-                                <div className="flex items-center">
-                                  <button 
-                                    onClick={() => onViewProvider && onViewProvider(quote.providerId)}
-                                    className="text-left group hover:opacity-80 transition-opacity"
-                                  >
-                                    <div className="text-sm font-medium text-gray-900 flex items-center gap-1 group-hover:text-dubai-blue">
-                                      {quote.providerName}
-                                      {quote.verified && <svg className="w-4 h-4 text-blue-500" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>}
+                     {/* Progress Stepper */}
+                     <RequestStatusStepper status={req.status} />
+
+                     <div className="p-6 pt-2">
+                        <h4 className="text-sm font-semibold text-gray-900 mb-4 uppercase tracking-wider">Compare Quotes</h4>
+                        {req.quotes.length > 0 ? (
+                        <div className="overflow-x-auto">
+                            <table className="min-w-full divide-y divide-gray-200">
+                            <thead className="bg-gray-50">
+                                <tr>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Provider</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Price (AED)</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Timeline</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rating</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody className="bg-white divide-y divide-gray-200">
+                                {req.quotes.map(quote => (
+                                <tr key={quote.id} className={isRequestClosed && quote.status !== 'accepted' ? 'opacity-50' : ''}>
+                                    <td className="px-6 py-4 whitespace-nowrap">
+                                    <div className="flex items-center">
+                                        <button 
+                                        onClick={() => onViewProvider && onViewProvider(quote.providerId)}
+                                        className="text-left group hover:opacity-80 transition-opacity"
+                                        >
+                                        <div className="text-sm font-medium text-gray-900 flex items-center gap-1 group-hover:text-dubai-blue">
+                                            {quote.providerName}
+                                            {quote.verified && <svg className="w-4 h-4 text-blue-500" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>}
+                                        </div>
+                                        <div className="text-xs text-gray-400">View Profile</div>
+                                        </button>
                                     </div>
-                                    <div className="text-xs text-gray-400">View Profile</div>
-                                  </button>
-                                </div>
-                              </td>
-                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-bold">
-                                {quote.price.toLocaleString()}
-                              </td>
-                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                {quote.timeline}
-                              </td>
-                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                <div className="flex text-yellow-400">
-                                  {[...Array(5)].map((_, i) => (
-                                    <svg key={i} className={`w-4 h-4 ${i < quote.rating ? 'fill-current' : 'text-gray-300'}`} viewBox="0 0 20 20" fill="currentColor"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" /></svg>
-                                  ))}
-                                </div>
-                              </td>
-                              <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                                {quote.status === 'accepted' ? (
-                                  req.status === 'accepted' ? (
-                                    <button 
-                                      onClick={() => onAcceptQuote && onAcceptQuote(req.id, quote.id)}
-                                      className="inline-flex items-center px-4 py-1.5 rounded-lg text-xs font-bold bg-dubai-gold text-white hover:bg-yellow-600 transition-colors shadow-sm"
-                                    >
-                                      Pay Now
-                                    </button>
-                                  ) : (
-                                    <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                                      <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/></svg>
-                                      Paid & Closed
-                                    </span>
-                                  )
-                                ) : isRequestClosed ? (
-                                  <span className="text-gray-400 italic text-xs">Closed</span>
-                                ) : (
-                                  req.status === 'accepted' ? (
-                                    <span className="text-gray-300 italic text-xs">Not Selected</span>
-                                  ) : (
-                                    <div className="flex gap-2 items-center">
-                                      <button
-                                        onClick={() => onViewQuote && onViewQuote(quote)}
-                                        className="text-gray-500 hover:text-gray-900 transition-colors"
-                                      >
-                                        View
-                                      </button>
-                                      <button 
-                                        onClick={() => onChatWithProvider && onChatWithProvider(quote.providerId, quote.providerName)}
-                                        className="text-dubai-blue hover:text-blue-900 transition-colors"
-                                      >
-                                        Chat
-                                      </button>
-                                      <button 
-                                        onClick={() => onAcceptQuote && onAcceptQuote(req.id, quote.id)}
-                                        className="text-dubai-gold hover:text-yellow-700 font-bold transition-colors"
-                                      >
-                                        Accept
-                                      </button>
+                                    </td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-bold">
+                                    {quote.price.toLocaleString()}
+                                    </td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                    {quote.timeline}
+                                    </td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                    <div className="flex text-yellow-400">
+                                        {[...Array(5)].map((_, i) => (
+                                        <svg key={i} className={`w-4 h-4 ${i < quote.rating ? 'fill-current' : 'text-gray-300'}`} viewBox="0 0 20 20" fill="currentColor"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" /></svg>
+                                        ))}
                                     </div>
-                                  )
-                                )}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : (
-                    <p className="text-sm text-gray-500 italic">Waiting for providers to submit quotes...</p>
-                  )}
-                </div>
+                                    </td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                    {quote.status === 'accepted' ? (
+                                        req.status === 'accepted' ? (
+                                        <button 
+                                            onClick={() => onAcceptQuote && onAcceptQuote(req.id, quote.id)}
+                                            className="inline-flex items-center px-4 py-1.5 rounded-lg text-xs font-bold bg-dubai-gold text-white hover:bg-yellow-600 transition-colors shadow-sm"
+                                        >
+                                            Pay Now
+                                        </button>
+                                        ) : (
+                                        <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                            <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/></svg>
+                                            Paid & Closed
+                                        </span>
+                                        )
+                                    ) : isRequestClosed ? (
+                                        <span className="text-gray-400 italic text-xs">Closed</span>
+                                    ) : (
+                                        req.status === 'accepted' ? (
+                                        <span className="text-gray-300 italic text-xs">Not Selected</span>
+                                        ) : (
+                                        <div className="flex gap-2 items-center">
+                                            <button
+                                            onClick={() => onViewQuote && onViewQuote(quote)}
+                                            className="text-gray-500 hover:text-gray-900 transition-colors"
+                                            >
+                                            View
+                                            </button>
+                                            <button 
+                                            onClick={() => onChatWithProvider && onChatWithProvider(quote.providerId, quote.providerName)}
+                                            className="text-dubai-blue hover:text-blue-900 transition-colors"
+                                            >
+                                            Chat
+                                            </button>
+                                            <button 
+                                            onClick={() => onAcceptQuote && onAcceptQuote(req.id, quote.id)}
+                                            className="text-dubai-gold hover:text-yellow-700 font-bold transition-colors"
+                                            >
+                                            Accept
+                                            </button>
+                                        </div>
+                                        )
+                                    )}
+                                    </td>
+                                </tr>
+                                ))}
+                            </tbody>
+                            </table>
+                        </div>
+                        ) : (
+                        <p className="text-sm text-gray-500 italic">Waiting for providers to submit quotes...</p>
+                        )}
+                     </div>
+                  </div>
+                )}
               </div>
             );
           })}

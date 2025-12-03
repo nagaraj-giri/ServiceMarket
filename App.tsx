@@ -11,7 +11,6 @@ import ProfileSettings from './components/ProfileSettings';
 import SubmitQuoteModal from './components/SubmitQuoteModal';
 import QuoteDetailsModal from './components/QuoteDetailsModal';
 import AuthPage from './components/AuthPage';
-import TrashPage from './components/TrashPage';
 import { UserRole, ServiceRequest, ProviderProfile as IProviderProfile, Review, Quote, User, Conversation } from './types';
 import { api } from './services/api';
 
@@ -20,7 +19,7 @@ const App: React.FC = () => {
   const [currentPage, setCurrentPage] = useState<string>('home');
   const [showRequestForm, setShowRequestForm] = useState(false);
   
-  // Data State (Fetched from API)
+  // Data State
   const [requests, setRequests] = useState<ServiceRequest[]>([]);
   const [providers, setProviders] = useState<IProviderProfile[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -29,7 +28,7 @@ const App: React.FC = () => {
   // UI State
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
   const [ignoredRequestIds, setIgnoredRequestIds] = useState<string[]>([]);
-  const [quoteRequest, setQuoteRequest] = useState<string | null>(null); // Request ID being quoted
+  const [quoteRequest, setQuoteRequest] = useState<string | null>(null); 
   const [activeChat, setActiveChat] = useState<{name: string, id: string} | null>(null);
   const [quoteToAccept, setQuoteToAccept] = useState<{ requestId: string, quote: Quote } | null>(null);
   const [viewingQuote, setViewingQuote] = useState<Quote | null>(null);
@@ -39,7 +38,6 @@ const App: React.FC = () => {
   // Fetch data
   const fetchData = async () => {
     try {
-      // We don't block UI with loading state during polling updates
       const [fetchedRequests, fetchedProviders] = await Promise.all([
         api.getRequests(),
         api.getProviders()
@@ -56,7 +54,7 @@ const App: React.FC = () => {
     }
   };
 
-  // Check auth and Initialize Data
+  // Initialize
   useEffect(() => {
     const initApp = async () => {
       try {
@@ -72,12 +70,11 @@ const App: React.FC = () => {
     initApp();
   }, []);
 
-  // Polling for updates (simulating real-time P2P)
+  // Polling
   useEffect(() => {
     if (currentUser) {
       pollingInterval.current = setInterval(fetchData, 3000);
     }
-    // Storage event listener for cross-tab sync
     const handleStorageChange = (e: StorageEvent) => {
        if (e.key && e.key.startsWith('dubailink_')) {
           fetchData();
@@ -111,8 +108,7 @@ const App: React.FC = () => {
         userId: currentUser?.id
       });
       setShowRequestForm(false);
-      fetchData(); // Refresh immediately
-      // Navigate to dashboard to see the new request
+      fetchData();
       setCurrentPage('dashboard');
     } catch (error) {
       console.error("Failed to create request", error);
@@ -121,36 +117,16 @@ const App: React.FC = () => {
 
   const handleDeleteRequest = async (requestId: string) => {
     try {
-       await api.deleteRequest(requestId);
-       fetchData();
+       await api.permanentDeleteRequest(requestId);
+       await fetchData(); // Await to ensure UI updates
     } catch (error) {
        console.error("Failed to delete request", error);
     }
   };
 
-  const handleRestoreRequest = async (requestId: string) => {
-     try {
-        await api.restoreRequest(requestId);
-        fetchData();
-     } catch (error) {
-        console.error("Failed to restore request", error);
-     }
-  };
-
-  const handlePermanentDelete = async (requestId: string) => {
-     try {
-        await api.permanentDeleteRequest(requestId);
-        fetchData();
-     } catch (error) {
-        console.error("Failed to permanently delete request", error);
-     }
-  };
-
   const handleSubmitQuote = async (quoteData: any) => {
     if (!quoteRequest || !currentUser) return;
-    
     try {
-      // Need current provider profile
       const myProfile = providers.find(p => p.id === currentUser.id);
       if (myProfile) {
         await api.submitQuote(quoteRequest, myProfile, quoteData);
@@ -166,7 +142,6 @@ const App: React.FC = () => {
     if (!quoteToAccept) return;
     try {
       await api.acceptQuote(quoteToAccept.requestId, quoteToAccept.quote.id);
-      // Don't close modal yet, move to payment step inside modal
       fetchData();
     } catch (error) {
       console.error("Failed to accept quote", error);
@@ -187,13 +162,12 @@ const App: React.FC = () => {
   const handleProfileUpdate = async (data: any) => {
     if (currentUser?.role === UserRole.PROVIDER) {
       await api.updateProvider(currentUser.id, {
-        name: data.name, // Display name
+        name: data.name,
         tagline: data.tagline,
         description: data.description,
         services: data.services,
         location: data.location
       });
-      // Also update user record name if needed
     }
     setCurrentPage('dashboard');
     fetchData();
@@ -239,8 +213,6 @@ const App: React.FC = () => {
                fetchData();
              }}
              onRequestQuote={() => {
-               // Logic to start a request specifically for this provider could go here
-               // For now, just go to home to create generic request
                setCurrentPage('home');
                setShowRequestForm(true);
              }}
@@ -253,33 +225,15 @@ const App: React.FC = () => {
       return <AiAssistant />;
     }
 
-    if (currentPage === 'trash' && currentUser?.role === UserRole.USER) {
-       const deletedRequests = requests.filter(r => r.userId === currentUser.id && r.isDeleted);
-       return (
-         <TrashPage 
-           deletedRequests={deletedRequests}
-           onRestore={handleRestoreRequest}
-           onPermanentDelete={handlePermanentDelete}
-           onBack={() => setCurrentPage('dashboard')}
-         />
-       );
-    }
-
     if (currentPage === 'dashboard') {
-      // Filter requests based on role
       let visibleRequests = requests;
-      let deletedCount = 0;
 
       if (currentUser?.role === UserRole.USER) {
-        // Only show active (non-deleted) requests in main dashboard
-        visibleRequests = requests.filter(r => r.userId === currentUser.id && !r.isDeleted);
-        // Calculate deleted count for the trash button
-        deletedCount = requests.filter(r => r.userId === currentUser.id && r.isDeleted).length;
+        // Just verify userId matches. permanentDeleteRequest removed it from storage.
+        visibleRequests = requests.filter(r => r.userId === currentUser.id);
       } else if (currentUser?.role === UserRole.PROVIDER) {
-        // Provider sees all open requests they haven't ignored
-        // Or requests they have quoted on
         visibleRequests = requests.filter(r => 
-          !ignoredRequestIds.includes(r.id) && !r.isDeleted
+          !ignoredRequestIds.includes(r.id)
         );
       }
 
@@ -310,16 +264,12 @@ const App: React.FC = () => {
           onIgnoreRequest={(requestId) => setIgnoredRequestIds(prev => [...prev, requestId])}
           onViewQuote={(quote) => setViewingQuote(quote)}
           onDeleteRequest={handleDeleteRequest}
-          onViewTrash={() => setCurrentPage('trash')}
-          deletedCount={deletedCount}
         />
       );
     }
 
-    // Home Page
     return (
       <div className="bg-white">
-        {/* Hero Section */}
         <div className="relative bg-dubai-dark text-white overflow-hidden">
           <div className="absolute inset-0">
             <img 
@@ -340,7 +290,7 @@ const App: React.FC = () => {
               <button 
                 onClick={() => {
                    if (!currentUser) {
-                      setCurrentPage('dashboard'); // Trigger auth
+                      setCurrentPage('dashboard');
                    } else {
                       setShowRequestForm(true);
                    }
@@ -359,7 +309,6 @@ const App: React.FC = () => {
           </div>
         </div>
 
-        {/* Popular Services */}
         <div className="max-w-7xl mx-auto px-4 py-16 sm:px-6 lg:px-8">
           <h2 className="text-2xl font-bold text-gray-900 mb-8">Popular Services</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
@@ -392,7 +341,6 @@ const App: React.FC = () => {
           </div>
         </div>
 
-        {/* How it works */}
         <div className="bg-white border-t border-gray-100 py-16">
            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
               <h2 className="text-2xl font-bold text-center text-gray-900 mb-12">How DubaiLink Works</h2>
@@ -434,7 +382,6 @@ const App: React.FC = () => {
     >
       {renderContent()}
 
-      {/* Modals */}
       {showRequestForm && (
         <RequestForm 
           onSubmit={handleCreateRequest}

@@ -193,7 +193,6 @@ export const api = {
   },
 
   getCurrentUser: async (): Promise<User | null> => {
-    // Check local storage synchronously for speed, but wrap in promise
     const data = localStorage.getItem(KEYS.CURRENT_USER);
     return data ? JSON.parse(data) : null;
   },
@@ -251,7 +250,6 @@ export const api = {
   // Requests
   getRequests: async (): Promise<ServiceRequest[]> => {
     const data = localStorage.getItem(KEYS.REQUESTS);
-    // Return sorted by date desc
     const requests: ServiceRequest[] = data ? JSON.parse(data) : [];
     return requests.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   },
@@ -273,34 +271,13 @@ export const api = {
     return newRequest;
   },
 
-  // Soft delete
-  deleteRequest: async (requestId: string): Promise<void> => {
-    await delay(500);
-    const requests: ServiceRequest[] = JSON.parse(localStorage.getItem(KEYS.REQUESTS) || '[]');
-    const index = requests.findIndex(r => r.id === requestId);
-    if (index !== -1) {
-      requests[index].isDeleted = true;
-      localStorage.setItem(KEYS.REQUESTS, JSON.stringify(requests));
-    }
-  },
-
-  // Restore deleted request
-  restoreRequest: async (requestId: string): Promise<void> => {
-    await delay(500);
-    const requests: ServiceRequest[] = JSON.parse(localStorage.getItem(KEYS.REQUESTS) || '[]');
-    const index = requests.findIndex(r => r.id === requestId);
-    if (index !== -1) {
-      requests[index].isDeleted = false;
-      localStorage.setItem(KEYS.REQUESTS, JSON.stringify(requests));
-    }
-  },
-
-  // Permanent delete
+  // Permanent delete with 0 delay for instant UI feedback
   permanentDeleteRequest: async (requestId: string): Promise<void> => {
-    await delay(500);
+    // Immediate action
     const requests: ServiceRequest[] = JSON.parse(localStorage.getItem(KEYS.REQUESTS) || '[]');
     const filteredRequests = requests.filter(r => r.id !== requestId);
     localStorage.setItem(KEYS.REQUESTS, JSON.stringify(filteredRequests));
+    return Promise.resolve();
   },
 
   // Quotes
@@ -367,7 +344,6 @@ export const api = {
 
   // Chat / Messages
   getMessages: async (userId: string, otherUserId: string): Promise<DirectMessage[]> => {
-    // No artificial delay for chat to feel snappy
     const allChats: DirectMessage[] = JSON.parse(localStorage.getItem(KEYS.CHATS) || '[]');
     return allChats.filter(msg => 
       (msg.senderId === userId && msg.recipientId === otherUserId) ||
@@ -412,7 +388,6 @@ export const api = {
         const lastMsg = msgs[0];
         const unreadCount = msgs.filter(m => m.recipientId === userId && !m.read).length;
         
-        // Resolve name
         let name = 'Unknown User';
         const userObj = users.find(u => u.id === otherId);
         if (userObj) name = userObj.name;
@@ -434,5 +409,4 @@ export const api = {
   }
 };
 
-// Initialize on load
 api.init();
