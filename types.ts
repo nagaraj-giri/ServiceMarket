@@ -11,6 +11,14 @@ export enum ServiceCategory {
   TRAVEL = 'Travel Packages'
 }
 
+export interface User {
+  id: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  companyName?: string; // For providers
+}
+
 export interface Quote {
   id: string;
   providerId: string;
@@ -34,6 +42,7 @@ export interface ServiceRequest {
   status: 'open' | 'quoted' | 'accepted' | 'closed';
   createdAt: string;
   quotes: Quote[];
+  isDeleted?: boolean;
 }
 
 export interface ChatMessage {
@@ -46,6 +55,23 @@ export interface ChatMessage {
       web?: { uri: string; title: string };
     }>;
   };
+}
+
+export interface DirectMessage {
+  id: string;
+  senderId: string;
+  recipientId: string;
+  content: string;
+  timestamp: number;
+  read: boolean;
+}
+
+export interface Conversation {
+  otherUserId: string;
+  otherUserName: string;
+  lastMessage: string;
+  timestamp: number;
+  unreadCount: number;
 }
 
 export interface Review {

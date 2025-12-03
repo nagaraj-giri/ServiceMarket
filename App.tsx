@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+
+import React, { useState, useEffect, useRef } from 'react';
 import Layout from './components/Layout';
 import AiAssistant from './components/AiAssistant';
 import RequestForm from './components/RequestForm';
@@ -9,17 +10,20 @@ import QuoteAcceptanceModal from './components/QuoteAcceptanceModal';
 import ProfileSettings from './components/ProfileSettings';
 import SubmitQuoteModal from './components/SubmitQuoteModal';
 import QuoteDetailsModal from './components/QuoteDetailsModal';
-import { UserRole, ServiceRequest, ProviderProfile as IProviderProfile, Review, Quote } from './types';
+import AuthPage from './components/AuthPage';
+import TrashPage from './components/TrashPage';
+import { UserRole, ServiceRequest, ProviderProfile as IProviderProfile, Review, Quote, User, Conversation } from './types';
 import { api } from './services/api';
 
 const App: React.FC = () => {
-  const [activeRole, setActiveRole] = useState<UserRole>(UserRole.USER);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [currentPage, setCurrentPage] = useState<string>('home');
   const [showRequestForm, setShowRequestForm] = useState(false);
   
   // Data State (Fetched from API)
   const [requests, setRequests] = useState<ServiceRequest[]>([]);
   const [providers, setProviders] = useState<IProviderProfile[]>([]);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   // UI State
@@ -30,308 +34,389 @@ const App: React.FC = () => {
   const [quoteToAccept, setQuoteToAccept] = useState<{ requestId: string, quote: Quote } | null>(null);
   const [viewingQuote, setViewingQuote] = useState<Quote | null>(null);
 
-  // Initialize Data
+  const pollingInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Fetch data
+  const fetchData = async () => {
+    try {
+      // We don't block UI with loading state during polling updates
+      const [fetchedRequests, fetchedProviders] = await Promise.all([
+        api.getRequests(),
+        api.getProviders()
+      ]);
+      setRequests(fetchedRequests);
+      setProviders(fetchedProviders);
+      
+      if (currentUser) {
+         const chats = await api.getConversations(currentUser.id);
+         setConversations(chats);
+      }
+    } catch (error) {
+      console.error("Failed to load data", error);
+    }
+  };
+
+  // Check auth and Initialize Data
   useEffect(() => {
-    const fetchData = async () => {
-      setIsLoading(true);
+    const initApp = async () => {
       try {
-        const [fetchedRequests, fetchedProviders] = await Promise.all([
-          api.getRequests(),
-          api.getProviders()
-        ]);
-        setRequests(fetchedRequests);
-        setProviders(fetchedProviders);
-      } catch (error) {
-        console.error("Failed to load data", error);
+        const user = await api.getCurrentUser();
+        setCurrentUser(user);
+        await fetchData();
+      } catch (err) {
+        console.error("Init error", err);
       } finally {
         setIsLoading(false);
       }
     };
-    fetchData();
+    initApp();
   }, []);
 
-  // Determine Current Provider (Simple logic: first provider in list if role is PROVIDER)
-  const currentProvider = activeRole === UserRole.PROVIDER && providers.length > 0 ? providers[0] : null;
+  // Polling for updates (simulating real-time P2P)
+  useEffect(() => {
+    if (currentUser) {
+      pollingInterval.current = setInterval(fetchData, 3000);
+    }
+    // Storage event listener for cross-tab sync
+    const handleStorageChange = (e: StorageEvent) => {
+       if (e.key && e.key.startsWith('dubailink_')) {
+          fetchData();
+       }
+    };
+    window.addEventListener('storage', handleStorageChange);
 
-  const handleCreateRequest = async (reqData: any) => {
+    return () => {
+      if (pollingInterval.current) clearInterval(pollingInterval.current);
+      window.removeEventListener('storage', handleStorageChange);
+    };
+  }, [currentUser]);
+
+  const handleLoginSuccess = async () => {
+    const user = await api.getCurrentUser();
+    setCurrentUser(user);
+    setCurrentPage('dashboard');
+    fetchData();
+  };
+
+  const handleLogout = async () => {
+    await api.logout();
+    setCurrentUser(null);
+    setCurrentPage('home');
+  };
+
+  const handleCreateRequest = async (requestData: any) => {
     try {
-      const newRequest = await api.createRequest({
-        userId: 'current_user',
-        ...reqData
+      await api.createRequest({
+        ...requestData,
+        userId: currentUser?.id
       });
-      setRequests(prev => [newRequest, ...prev]);
       setShowRequestForm(false);
+      fetchData(); // Refresh immediately
+      // Navigate to dashboard to see the new request
       setCurrentPage('dashboard');
-    } catch (e) {
-      console.error(e);
-      alert("Failed to create request");
+    } catch (error) {
+      console.error("Failed to create request", error);
     }
   };
 
-  const handleViewProvider = (providerId: string) => {
-    setSelectedProviderId(providerId);
-    setCurrentPage('provider-profile');
+  const handleDeleteRequest = async (requestId: string) => {
+    try {
+       await api.deleteRequest(requestId);
+       fetchData();
+    } catch (error) {
+       console.error("Failed to delete request", error);
+    }
   };
 
-  // User Actions
-  const handleInitiateAcceptQuote = (requestId: string, quoteId: string) => {
-    const request = requests.find(r => r.id === requestId);
-    if (!request) return;
-    const quote = request.quotes.find(q => q.id === quoteId);
-    if (!quote) return;
-
-    setQuoteToAccept({ requestId, quote });
+  const handleRestoreRequest = async (requestId: string) => {
+     try {
+        await api.restoreRequest(requestId);
+        fetchData();
+     } catch (error) {
+        console.error("Failed to restore request", error);
+     }
   };
 
-  const handleQuoteAccepted = async () => {
-    if (!quoteToAccept) return;
+  const handlePermanentDelete = async (requestId: string) => {
+     try {
+        await api.permanentDeleteRequest(requestId);
+        fetchData();
+     } catch (error) {
+        console.error("Failed to permanently delete request", error);
+     }
+  };
+
+  const handleSubmitQuote = async (quoteData: any) => {
+    if (!quoteRequest || !currentUser) return;
     
     try {
-      const updatedReq = await api.acceptQuote(quoteToAccept.requestId, quoteToAccept.quote.id);
-      setRequests(prev => prev.map(r => r.id === updatedReq.id ? updatedReq : r));
-    } catch (e) {
-      console.error(e);
+      // Need current provider profile
+      const myProfile = providers.find(p => p.id === currentUser.id);
+      if (myProfile) {
+        await api.submitQuote(quoteRequest, myProfile, quoteData);
+        setQuoteRequest(null);
+        fetchData();
+      }
+    } catch (error) {
+      console.error("Failed to submit quote", error);
+    }
+  };
+
+  const handleAcceptQuote = async () => {
+    if (!quoteToAccept) return;
+    try {
+      await api.acceptQuote(quoteToAccept.requestId, quoteToAccept.quote.id);
+      // Don't close modal yet, move to payment step inside modal
+      fetchData();
+    } catch (error) {
+      console.error("Failed to accept quote", error);
     }
   };
 
   const handlePaymentCompleted = async (method: 'online' | 'offline') => {
     if (!quoteToAccept) return;
-    
     try {
-      const updatedReq = await api.completeOrder(quoteToAccept.requestId);
-      setRequests(prev => prev.map(r => r.id === updatedReq.id ? updatedReq : r));
-    } catch (e) {
-      console.error(e);
+       await api.completeOrder(quoteToAccept.requestId);
+       setQuoteToAccept(null);
+       fetchData();
+    } catch (error) {
+       console.error("Failed to complete order", error);
     }
   };
 
-  // Provider Actions
-  const handleProviderIgnoreRequest = (requestId: string) => {
-    setIgnoredRequestIds(prev => [...prev, requestId]);
-  };
-
-  const handleProviderSubmitQuote = async (quoteData: { price: number, timeline: string, description: string }) => {
-    if (!quoteRequest || !currentProvider) return;
-
-    try {
-      const updatedReq = await api.submitQuote(quoteRequest, currentProvider, quoteData);
-      setRequests(prev => prev.map(r => r.id === updatedReq.id ? updatedReq : r));
-      setQuoteRequest(null);
-    } catch (e) {
-      console.error(e);
-      alert("Failed to submit quote");
+  const handleProfileUpdate = async (data: any) => {
+    if (currentUser?.role === UserRole.PROVIDER) {
+      await api.updateProvider(currentUser.id, {
+        name: data.name, // Display name
+        tagline: data.tagline,
+        description: data.description,
+        services: data.services,
+        location: data.location
+      });
+      // Also update user record name if needed
     }
+    setCurrentPage('dashboard');
+    fetchData();
   };
-
-  const handleSaveProfile = async (updatedData: any) => {
-    if (activeRole === UserRole.PROVIDER && currentProvider) {
-      try {
-        const updatedProvider = await api.updateProvider(currentProvider.id, updatedData);
-        setProviders(prev => prev.map(p => p.id === updatedProvider.id ? updatedProvider : p));
-        setCurrentPage('dashboard');
-      } catch (e) {
-        console.error(e);
-      }
-    } else {
-      // User profile update mock
-      setCurrentPage('dashboard');
-    }
-  };
-
-  // Chat Handlers
-  const handleChatWithProvider = (providerId: string, providerName: string) => {
-    setActiveChat({ id: providerId, name: providerName });
-  };
-
-  const handleChatWithUser = (userId: string, userName: string) => {
-    setActiveChat({ id: userId, name: userName });
-  };
-
-  const handleAddReview = async (providerId: string, reviewData: Omit<Review, 'id' | 'date'>) => {
-    try {
-      const updatedProvider = await api.addReview(providerId, reviewData);
-      setProviders(prev => prev.map(p => p.id === updatedProvider.id ? updatedProvider : p));
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const getCurrentRequestStatus = (requestId: string): ServiceRequest['status'] => {
-    return requests.find(r => r.id === requestId)?.status || 'open';
-  };
-
-  // Filter requests for Provider Dashboard
-  const getProviderRequests = () => {
-    if (activeRole === UserRole.PROVIDER && currentProvider) {
-      return requests.filter(r => !ignoredRequestIds.includes(r.id));
-    }
-    return requests;
-  };
-
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="flex flex-col items-center">
-          <div className="w-12 h-12 border-4 border-dubai-gold border-t-transparent rounded-full animate-spin mb-4"></div>
-          <p className="text-gray-500 font-medium">Loading DubaiLink Marketplace...</p>
-        </div>
-      </div>
-    );
-  }
 
   const renderContent = () => {
-    if (currentPage === 'ai-assistant') {
-      return <AiAssistant />;
-    }
-
-    if (currentPage === 'dashboard') {
+    if (isLoading) {
       return (
-        <Dashboard 
-          role={activeRole} 
-          requests={activeRole === UserRole.PROVIDER ? getProviderRequests() : requests}
-          currentProviderId={currentProvider?.id}
-          onViewProvider={handleViewProvider} 
-          onAcceptQuote={handleInitiateAcceptQuote}
-          onChatWithProvider={handleChatWithProvider}
-          onChatWithUser={handleChatWithUser}
-          onSubmitQuote={(id) => setQuoteRequest(id)}
-          onIgnoreRequest={handleProviderIgnoreRequest}
-          onViewQuote={(quote) => setViewingQuote(quote)}
-        />
+        <div className="min-h-screen flex items-center justify-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-dubai-gold"></div>
+        </div>
       );
     }
 
-    if (currentPage === 'provider-profile' && selectedProviderId) {
-      const provider = providers.find(p => p.id === selectedProviderId);
-      if (provider) {
-        return (
-          <ProviderProfile 
-            provider={provider} 
-            onBack={() => setCurrentPage('dashboard')}
-            onSubmitReview={handleAddReview}
-            onRequestQuote={() => setShowRequestForm(true)}
-          />
-        );
-      }
+    if (!currentUser && currentPage === 'dashboard') {
+       return <AuthPage onSuccess={handleLoginSuccess} />;
     }
 
-    if (currentPage === 'profile-settings') {
+    if (currentPage === 'profile-settings' && currentUser) {
       return (
         <ProfileSettings 
-          role={activeRole} 
-          initialData={activeRole === UserRole.PROVIDER ? currentProvider : undefined}
-          onSave={handleSaveProfile} 
-          onCancel={() => setCurrentPage('home')}
+          role={currentUser.role}
+          initialData={currentUser.role === UserRole.PROVIDER ? providers.find(p => p.id === currentUser.id) : { name: currentUser.name, email: currentUser.email }}
+          onSave={handleProfileUpdate}
+          onCancel={() => setCurrentPage('dashboard')}
           onPreview={() => {
-            if (activeRole === UserRole.PROVIDER && currentProvider) {
-              handleViewProvider(currentProvider.id);
-            }
+             setSelectedProviderId(currentUser.id);
+             setCurrentPage('provider-profile');
           }}
         />
       );
     }
+    
+    if (currentPage === 'provider-profile' && selectedProviderId) {
+       const provider = providers.find(p => p.id === selectedProviderId);
+       if (provider) {
+         return (
+           <ProviderProfile 
+             provider={provider} 
+             onBack={() => setCurrentPage('dashboard')}
+             onSubmitReview={async (id, review) => {
+               await api.addReview(id, review);
+               fetchData();
+             }}
+             onRequestQuote={() => {
+               // Logic to start a request specifically for this provider could go here
+               // For now, just go to home to create generic request
+               setCurrentPage('home');
+               setShowRequestForm(true);
+             }}
+           />
+         );
+       }
+    }
 
-    // Home / Marketplace View
+    if (currentPage === 'ai-assistant') {
+      return <AiAssistant />;
+    }
+
+    if (currentPage === 'trash' && currentUser?.role === UserRole.USER) {
+       const deletedRequests = requests.filter(r => r.userId === currentUser.id && r.isDeleted);
+       return (
+         <TrashPage 
+           deletedRequests={deletedRequests}
+           onRestore={handleRestoreRequest}
+           onPermanentDelete={handlePermanentDelete}
+           onBack={() => setCurrentPage('dashboard')}
+         />
+       );
+    }
+
+    if (currentPage === 'dashboard') {
+      // Filter requests based on role
+      let visibleRequests = requests;
+      let deletedCount = 0;
+
+      if (currentUser?.role === UserRole.USER) {
+        // Only show active (non-deleted) requests in main dashboard
+        visibleRequests = requests.filter(r => r.userId === currentUser.id && !r.isDeleted);
+        // Calculate deleted count for the trash button
+        deletedCount = requests.filter(r => r.userId === currentUser.id && r.isDeleted).length;
+      } else if (currentUser?.role === UserRole.PROVIDER) {
+        // Provider sees all open requests they haven't ignored
+        // Or requests they have quoted on
+        visibleRequests = requests.filter(r => 
+          !ignoredRequestIds.includes(r.id) && !r.isDeleted
+        );
+      }
+
+      return (
+        <Dashboard 
+          role={currentUser!.role}
+          requests={visibleRequests}
+          conversations={conversations}
+          currentProviderId={currentUser?.id}
+          onViewProvider={(id) => {
+            setSelectedProviderId(id);
+            setCurrentPage('provider-profile');
+          }}
+          onAcceptQuote={(requestId, quoteId) => {
+             const req = requests.find(r => r.id === requestId);
+             const quote = req?.quotes.find(q => q.id === quoteId);
+             if (req && quote) {
+                setQuoteToAccept({ requestId, quote });
+             }
+          }}
+          onChatWithProvider={(providerId, providerName) => {
+             setActiveChat({ name: providerName, id: providerId });
+          }}
+          onChatWithUser={(userId, userName) => {
+             setActiveChat({ name: userName, id: userId });
+          }}
+          onSubmitQuote={(requestId) => setQuoteRequest(requestId)}
+          onIgnoreRequest={(requestId) => setIgnoredRequestIds(prev => [...prev, requestId])}
+          onViewQuote={(quote) => setViewingQuote(quote)}
+          onDeleteRequest={handleDeleteRequest}
+          onViewTrash={() => setCurrentPage('trash')}
+          deletedCount={deletedCount}
+        />
+      );
+    }
+
+    // Home Page
     return (
-      <div>
+      <div className="bg-white">
         {/* Hero Section */}
-        <div className="relative bg-dubai-dark overflow-hidden">
+        <div className="relative bg-dubai-dark text-white overflow-hidden">
           <div className="absolute inset-0">
             <img 
-              className="w-full h-full object-cover opacity-30" 
-              src="https://images.unsplash.com/photo-1512453979798-5ea904ac22ac?ixlib=rb-1.2.1&auto=format&fit=crop&w=1950&q=80" 
+              src="https://images.unsplash.com/photo-1512453979798-5ea904ac6605?ixlib=rb-1.2.1&auto=format&fit=crop&w=1950&q=80" 
               alt="Dubai Skyline" 
+              className="w-full h-full object-cover opacity-20"
             />
-            <div className="absolute inset-0 bg-gradient-to-r from-dubai-dark to-transparent mix-blend-multiply" />
+            <div className="absolute inset-0 bg-gradient-to-r from-dubai-dark to-transparent"></div>
           </div>
-          <div className="relative max-w-7xl mx-auto py-24 px-4 sm:px-6 lg:px-8">
-            <h1 className="text-4xl font-extrabold tracking-tight text-white sm:text-5xl lg:text-6xl">
+          <div className="relative max-w-7xl mx-auto px-4 py-24 sm:px-6 lg:px-8 flex flex-col items-start">
+            <h1 className="text-4xl md:text-6xl font-bold tracking-tight mb-6">
               Dubai Services, <span className="text-dubai-gold">Simplified.</span>
             </h1>
-            <p className="mt-6 text-xl text-gray-300 max-w-3xl">
-              Connect with verified PROs, Business Consultants, and Travel Agencies. 
-              Get accurate quotes, compare prices, and handle everything online.
+            <p className="text-xl text-gray-300 max-w-2xl mb-10">
+              Connect with verified PROs, Business Consultants, and Travel Agencies. Get accurate quotes, compare prices, and handle everything online.
             </p>
-            <div className="mt-10 flex gap-4">
+            <div className="flex flex-col sm:flex-row gap-4">
               <button 
-                onClick={() => setShowRequestForm(true)}
-                className="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md text-dubai-dark bg-dubai-gold hover:bg-yellow-600 hover:text-white transition-all shadow-lg hover:shadow-xl"
+                onClick={() => {
+                   if (!currentUser) {
+                      setCurrentPage('dashboard'); // Trigger auth
+                   } else {
+                      setShowRequestForm(true);
+                   }
+                }}
+                className="bg-dubai-gold text-white px-8 py-4 rounded-lg text-lg font-bold hover:bg-yellow-600 transition-colors shadow-lg"
               >
                 Post a Request
               </button>
               <button 
                 onClick={() => setCurrentPage('ai-assistant')}
-                className="inline-flex items-center px-6 py-3 border border-gray-500 text-base font-medium rounded-md text-white bg-transparent hover:bg-gray-800 transition-all backdrop-blur-sm"
+                className="bg-white/10 backdrop-blur-md border border-white/20 text-white px-8 py-4 rounded-lg text-lg font-medium hover:bg-white/20 transition-colors flex items-center gap-2"
               >
-                <span className="mr-2">✨</span> Research with AI
+                <span>✨</span> Research with AI
               </button>
             </div>
           </div>
         </div>
 
-        {/* Categories Grid */}
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
+        {/* Popular Services */}
+        <div className="max-w-7xl mx-auto px-4 py-16 sm:px-6 lg:px-8">
           <h2 className="text-2xl font-bold text-gray-900 mb-8">Popular Services</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            {[
-              {
-                title: 'Golden Visa & Residencies',
-                desc: '10-year Golden Visa, Green Visa, and family sponsorship.',
-                icon: '🛂',
-                color: 'bg-blue-50'
-              },
-              {
-                title: 'Business Setup',
-                desc: 'Mainland, Freezone, and Offshore company formation.',
-                icon: '🏢',
-                color: 'bg-yellow-50'
-              },
-              {
-                title: 'Tourist & Travel',
-                desc: 'Desert safaris, luxury stays, and 30/60 day tourist visas.',
-                icon: '✈️',
-                color: 'bg-green-50'
-              }
-            ].map((service, idx) => (
-              <div key={idx} className={`${service.color} rounded-2xl p-8 transition-transform hover:-translate-y-1 cursor-pointer`} onClick={() => setShowRequestForm(true)}>
-                <div className="text-4xl mb-4">{service.icon}</div>
-                <h3 className="text-xl font-bold text-gray-900 mb-2">{service.title}</h3>
-                <p className="text-gray-600">{service.desc}</p>
-                <div className="mt-4 text-dubai-blue font-semibold text-sm flex items-center">
-                  Get Quotes <svg className="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" /></svg>
-                </div>
+            <div className="bg-gray-50 rounded-2xl p-8 hover:shadow-md transition-shadow cursor-pointer border border-gray-100 group">
+              <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center mb-6 group-hover:bg-dubai-blue transition-colors">
+                <svg className="w-6 h-6 text-blue-600 group-hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0V5a2 2 0 114 0v1m-4 0a2 2 0 104 0m-5 8a2 2 0 100-4 2 2 0 000 4zm0 0c1.306 0 2.417.835 2.83 2M9 14a3.001 3.001 0 00-2.83 2M15 11h3m-3 4h2" /></svg>
               </div>
-            ))}
+              <h3 className="text-xl font-bold text-gray-900 mb-2">Golden Visa & Residencies</h3>
+              <p className="text-gray-500 mb-4">10-year Golden Visa, Green Visa, and family sponsorship.</p>
+              <span className="text-dubai-blue font-medium flex items-center gap-1 group-hover:gap-2 transition-all">Get Quotes <span>&rarr;</span></span>
+            </div>
+            
+            <div className="bg-gray-50 rounded-2xl p-8 hover:shadow-md transition-shadow cursor-pointer border border-gray-100 group">
+               <div className="w-12 h-12 bg-yellow-100 rounded-xl flex items-center justify-center mb-6 group-hover:bg-dubai-gold transition-colors">
+                <svg className="w-6 h-6 text-yellow-700 group-hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
+              </div>
+              <h3 className="text-xl font-bold text-gray-900 mb-2">Business Setup</h3>
+              <p className="text-gray-500 mb-4">Mainland & Freezone company formation, licensing, and banking.</p>
+               <span className="text-dubai-blue font-medium flex items-center gap-1 group-hover:gap-2 transition-all">Get Quotes <span>&rarr;</span></span>
+            </div>
+
+            <div className="bg-gray-50 rounded-2xl p-8 hover:shadow-md transition-shadow cursor-pointer border border-gray-100 group">
+               <div className="w-12 h-12 bg-purple-100 rounded-xl flex items-center justify-center mb-6 group-hover:bg-purple-600 transition-colors">
+                <svg className="w-6 h-6 text-purple-600 group-hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              </div>
+              <h3 className="text-xl font-bold text-gray-900 mb-2">Tourist & Travel</h3>
+              <p className="text-gray-500 mb-4">Desert safaris, luxury stays, and 30/60 day tourist visas.</p>
+               <span className="text-dubai-blue font-medium flex items-center gap-1 group-hover:gap-2 transition-all">Get Quotes <span>&rarr;</span></span>
+            </div>
           </div>
         </div>
 
-        {/* Why Choose Us */}
-        <div className="bg-white py-16 border-t border-gray-100">
+        {/* How it works */}
+        <div className="bg-white border-t border-gray-100 py-16">
            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-              <div className="text-center mb-12">
-                <h2 className="text-3xl font-bold text-gray-900">Why DubaiLink?</h2>
-              </div>
+              <h2 className="text-2xl font-bold text-center text-gray-900 mb-12">How DubaiLink Works</h2>
               <div className="grid grid-cols-1 md:grid-cols-4 gap-8 text-center">
-                <div>
-                   <div className="w-12 h-12 bg-dubai-gold rounded-full flex items-center justify-center text-white font-bold mx-auto mb-4">1</div>
-                   <h3 className="font-bold">Verified Providers</h3>
-                   <p className="text-sm text-gray-500 mt-2">All PROs are vetted and licensed.</p>
-                </div>
-                <div>
-                   <div className="w-12 h-12 bg-dubai-gold rounded-full flex items-center justify-center text-white font-bold mx-auto mb-4">2</div>
-                   <h3 className="font-bold">Transparent Pricing</h3>
-                   <p className="text-sm text-gray-500 mt-2">Compare apples to apples. No hidden fees.</p>
-                </div>
-                <div>
-                   <div className="w-12 h-12 bg-dubai-gold rounded-full flex items-center justify-center text-white font-bold mx-auto mb-4">3</div>
-                   <h3 className="font-bold">AI Powered</h3>
-                   <p className="text-sm text-gray-500 mt-2">Get instant answers on regulations.</p>
-                </div>
-                <div>
-                   <div className="w-12 h-12 bg-dubai-gold rounded-full flex items-center justify-center text-white font-bold mx-auto mb-4">4</div>
-                   <h3 className="font-bold">Secure Payments</h3>
-                   <p className="text-sm text-gray-500 mt-2">Your money is held safe until service delivery.</p>
-                </div>
+                 <div>
+                    <div className="w-10 h-10 bg-dubai-gold text-white rounded-full flex items-center justify-center font-bold mx-auto mb-4">1</div>
+                    <h3 className="font-bold text-gray-900">Post a Request</h3>
+                    <p className="text-sm text-gray-500 mt-2">Tell us what you need. AI helps you research requirements.</p>
+                 </div>
+                 <div>
+                    <div className="w-10 h-10 bg-dubai-gold text-white rounded-full flex items-center justify-center font-bold mx-auto mb-4">2</div>
+                    <h3 className="font-bold text-gray-900">Receive Quotes</h3>
+                    <p className="text-sm text-gray-500 mt-2">Get competitive offers from verified providers within 24 hours.</p>
+                 </div>
+                 <div>
+                    <div className="w-10 h-10 bg-dubai-gold text-white rounded-full flex items-center justify-center font-bold mx-auto mb-4">3</div>
+                    <h3 className="font-bold text-gray-900">Compare & Chat</h3>
+                    <p className="text-sm text-gray-500 mt-2">Check ratings, reviews, and chat directly with providers.</p>
+                 </div>
+                 <div>
+                    <div className="w-10 h-10 bg-dubai-gold text-white rounded-full flex items-center justify-center font-bold mx-auto mb-4">4</div>
+                    <h3 className="font-bold text-gray-900">Secure Service</h3>
+                    <p className="text-sm text-gray-500 mt-2">Accept the best quote and get your service delivered.</p>
+                 </div>
               </div>
            </div>
         </div>
@@ -341,52 +426,51 @@ const App: React.FC = () => {
 
   return (
     <Layout 
-      activeRole={activeRole} 
-      setActiveRole={setActiveRole}
-      currentPage={currentPage}
-      setCurrentPage={setCurrentPage}
+      user={currentUser} 
+      currentPage={currentPage} 
+      setCurrentPage={setCurrentPage} 
+      onLogout={handleLogout}
+      onLoginClick={() => setCurrentPage('dashboard')}
     >
       {renderContent()}
-      
+
+      {/* Modals */}
       {showRequestForm && (
         <RequestForm 
-          onSubmit={handleCreateRequest} 
-          onCancel={() => setShowRequestForm(false)} 
+          onSubmit={handleCreateRequest}
+          onCancel={() => setShowRequestForm(false)}
         />
       )}
 
-      {/* Direct Message Modal */}
-      {activeChat && (
+      {activeChat && currentUser && (
         <DirectMessageModal 
           recipientName={activeChat.name}
-          currentUserRole={activeRole}
-          onClose={() => setActiveChat(null)} 
+          recipientId={activeChat.id}
+          currentUser={{ id: currentUser.id, role: currentUser.role }}
+          onClose={() => setActiveChat(null)}
         />
       )}
 
-      {/* Quote Acceptance Modal */}
+      {quoteRequest && (
+        <SubmitQuoteModal
+          requestTitle={requests.find(r => r.id === quoteRequest)?.title || 'Service Request'}
+          onClose={() => setQuoteRequest(null)}
+          onSubmit={handleSubmitQuote}
+        />
+      )}
+
       {quoteToAccept && (
-        <QuoteAcceptanceModal
+        <QuoteAcceptanceModal 
           quote={quoteToAccept.quote}
-          requestStatus={getCurrentRequestStatus(quoteToAccept.requestId)}
-          onAccept={handleQuoteAccepted}
+          requestStatus={requests.find(r => r.id === quoteToAccept.requestId)?.status || 'quoted'}
+          onAccept={handleAcceptQuote}
           onPaymentComplete={handlePaymentCompleted}
           onClose={() => setQuoteToAccept(null)}
         />
       )}
 
-      {/* Submit Quote Modal */}
-      {quoteRequest && (
-        <SubmitQuoteModal
-          requestTitle={requests.find(r => r.id === quoteRequest)?.title || 'Service Request'}
-          onClose={() => setQuoteRequest(null)}
-          onSubmit={handleProviderSubmitQuote}
-        />
-      )}
-
-      {/* Quote Details Modal (Read-Only View) */}
       {viewingQuote && (
-        <QuoteDetailsModal 
+        <QuoteDetailsModal
           quote={viewingQuote}
           onClose={() => setViewingQuote(null)}
         />

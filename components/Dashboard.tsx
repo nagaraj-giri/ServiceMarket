@@ -1,10 +1,11 @@
+
 import React from 'react';
-import { UserRole, ServiceRequest, Quote } from '../types';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
+import { UserRole, ServiceRequest, Quote, Conversation } from '../types';
 
 interface DashboardProps {
   role: UserRole;
   requests: ServiceRequest[];
+  conversations?: Conversation[];
   currentProviderId?: string;
   onViewProvider?: (providerId: string) => void;
   onAcceptQuote?: (requestId: string, quoteId: string) => void;
@@ -13,6 +14,9 @@ interface DashboardProps {
   onSubmitQuote?: (requestId: string) => void;
   onIgnoreRequest?: (requestId: string) => void;
   onViewQuote?: (quote: Quote) => void;
+  onDeleteRequest?: (requestId: string) => void;
+  onViewTrash?: () => void;
+  deletedCount?: number;
 }
 
 const RequestStatusStepper = ({ status }: { status: ServiceRequest['status'] }) => {
@@ -72,16 +76,7 @@ const RequestStatusStepper = ({ status }: { status: ServiceRequest['status'] }) 
   );
 };
 
-const Dashboard: React.FC<DashboardProps> = ({ role, requests, currentProviderId, onViewProvider, onAcceptQuote, onChatWithProvider, onChatWithUser, onSubmitQuote, onIgnoreRequest, onViewQuote }) => {
-  // Mock data for analytics
-  const analyticsData = [
-    { name: 'Mon', leads: 4, conversion: 2 },
-    { name: 'Tue', leads: 3, conversion: 1 },
-    { name: 'Wed', leads: 7, conversion: 4 },
-    { name: 'Thu', leads: 5, conversion: 3 },
-    { name: 'Fri', leads: 8, conversion: 5 },
-  ];
-
+const Dashboard: React.FC<DashboardProps> = ({ role, requests, conversations = [], currentProviderId, onViewProvider, onAcceptQuote, onChatWithProvider, onChatWithUser, onSubmitQuote, onIgnoreRequest, onViewQuote, onDeleteRequest, onViewTrash, deletedCount = 0 }) => {
   if (role === UserRole.PROVIDER) {
     // Separate requests into "New Opportunities" (Leads) and "My Quotes"
     const newLeads = requests.filter(r => 
@@ -96,7 +91,7 @@ const Dashboard: React.FC<DashboardProps> = ({ role, requests, currentProviderId
 
     // Calculate real-time stats
     const activeLeadsCount = newLeads.length;
-    const pendingQuotesCount = myQuotes.filter(r => r.status === 'quoted').length;
+    // const pendingQuotesCount = myQuotes.filter(r => r.status === 'quoted').length;
     
     // Calculate revenue: Sum of prices of accepted/closed quotes for this provider
     const revenue = myQuotes.reduce((total, req) => {
@@ -106,6 +101,8 @@ const Dashboard: React.FC<DashboardProps> = ({ role, requests, currentProviderId
       }
       return total;
     }, 0);
+
+    const totalUnread = conversations.reduce((sum, c) => sum + c.unreadCount, 0);
 
     return (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -126,7 +123,7 @@ const Dashboard: React.FC<DashboardProps> = ({ role, requests, currentProviderId
           </div>
           <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
             <h3 className="text-gray-500 text-sm font-medium">Unread Messages</h3>
-            <p className="text-3xl font-bold text-green-600 mt-2">3</p>
+            <p className={`text-3xl font-bold mt-2 ${totalUnread > 0 ? 'text-green-600' : 'text-gray-900'}`}>{totalUnread}</p>
           </div>
         </div>
 
@@ -190,37 +187,30 @@ const Dashboard: React.FC<DashboardProps> = ({ role, requests, currentProviderId
                  <span className="text-xs text-dubai-blue font-semibold hover:underline cursor-pointer">View All</span>
                </div>
                <div className="divide-y divide-gray-100 overflow-y-auto flex-1">
-                 {/* Mock messages for Provider */}
-                 <div onClick={() => onChatWithUser && onChatWithUser('u1', 'Sarah J.')} className="p-4 hover:bg-gray-50 cursor-pointer transition-colors flex gap-3 items-center">
-                    <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold text-sm">SJ</div>
-                    <div className="flex-1 min-w-0">
-                       <div className="flex justify-between items-baseline mb-0.5">
-                          <h4 className="text-sm font-bold text-gray-900 truncate">Sarah J.</h4>
-                          <span className="text-xs text-green-600 font-bold">New</span>
+                 {conversations.length > 0 ? (
+                    conversations.map(conv => (
+                       <div key={conv.otherUserId} onClick={() => onChatWithUser && onChatWithUser(conv.otherUserId, conv.otherUserName)} className="p-4 hover:bg-gray-50 cursor-pointer transition-colors flex gap-3 items-center">
+                          <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold text-sm">
+                             {conv.otherUserName.charAt(0)}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                             <div className="flex justify-between items-baseline mb-0.5">
+                                <h4 className="text-sm font-bold text-gray-900 truncate">{conv.otherUserName}</h4>
+                                {conv.unreadCount > 0 ? (
+                                   <span className="text-xs text-green-600 font-bold bg-green-100 px-2 py-0.5 rounded-full">{conv.unreadCount} New</span>
+                                ) : (
+                                   <span className="text-xs text-gray-400">{new Date(conv.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                                )}
+                             </div>
+                             <p className={`text-xs truncate ${conv.unreadCount > 0 ? 'text-gray-900 font-medium' : 'text-gray-500'}`}>{conv.lastMessage}</p>
+                          </div>
                        </div>
-                       <p className="text-xs text-gray-500 truncate">Is the Golden Visa processing time guaranteed?</p>
+                    ))
+                 ) : (
+                    <div className="p-8 text-center text-gray-500 flex flex-col items-center justify-center h-full">
+                       <p className="text-xs">No active conversations.</p>
                     </div>
-                 </div>
-                 <div onClick={() => onChatWithUser && onChatWithUser('u2', 'Ahmed K.')} className="p-4 hover:bg-gray-50 cursor-pointer transition-colors flex gap-3 items-center">
-                    <div className="w-10 h-10 rounded-full bg-gray-100 text-gray-600 flex items-center justify-center font-bold text-sm">AK</div>
-                    <div className="flex-1 min-w-0">
-                       <div className="flex justify-between items-baseline mb-0.5">
-                          <h4 className="text-sm font-bold text-gray-900 truncate">Ahmed K.</h4>
-                          <span className="text-xs text-gray-400">2h ago</span>
-                       </div>
-                       <p className="text-xs text-gray-500 truncate">Thanks for the update. That sounds good.</p>
-                    </div>
-                 </div>
-                 <div onClick={() => onChatWithUser && onChatWithUser('u3', 'Mike T.')} className="p-4 hover:bg-gray-50 cursor-pointer transition-colors flex gap-3 items-center">
-                    <div className="w-10 h-10 rounded-full bg-yellow-100 text-yellow-700 flex items-center justify-center font-bold text-sm">MT</div>
-                    <div className="flex-1 min-w-0">
-                       <div className="flex justify-between items-baseline mb-0.5">
-                          <h4 className="text-sm font-bold text-gray-900 truncate">Mike T.</h4>
-                          <span className="text-xs text-gray-400">Yesterday</span>
-                       </div>
-                       <p className="text-xs text-gray-500 truncate">Can we schedule a call to discuss the license details?</p>
-                    </div>
-                 </div>
+                 )}
                </div>
              </div>
 
@@ -268,7 +258,19 @@ const Dashboard: React.FC<DashboardProps> = ({ role, requests, currentProviderId
   // User Dashboard View
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <h1 className="text-2xl font-bold text-gray-900 mb-6">My Requests</h1>
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-2xl font-bold text-gray-900">My Requests</h1>
+        {onViewTrash && (
+          <button 
+            onClick={onViewTrash}
+            className="flex items-center gap-2 text-gray-500 hover:text-dubai-gold transition-colors px-3 py-1.5 rounded-lg hover:bg-yellow-50"
+            title="View Deleted Requests"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+            <span className="text-sm font-medium">Trash ({deletedCount})</span>
+          </button>
+        )}
+      </div>
       
       {requests.length === 0 ? (
         <div className="text-center py-20 bg-white rounded-xl border border-gray-200 border-dashed">
@@ -300,9 +302,24 @@ const Dashboard: React.FC<DashboardProps> = ({ role, requests, currentProviderId
                       Posted: {new Date(req.createdAt).toLocaleDateString()}
                     </p>
                   </div>
-                  <div className="text-right">
-                     <div className="text-2xl font-bold text-dubai-blue">{req.quotes.length}</div>
-                     <div className="text-xs text-gray-500 uppercase tracking-wide">Quotes Received</div>
+                  <div className="flex items-center gap-4">
+                     <div className="text-right">
+                        <div className="text-2xl font-bold text-dubai-blue">{req.quotes.length}</div>
+                        <div className="text-xs text-gray-500 uppercase tracking-wide">Quotes Received</div>
+                     </div>
+                     {(req.status === 'open' || req.status === 'quoted') && (
+                       <button 
+                          onClick={() => {
+                             if(onDeleteRequest && window.confirm('Are you sure you want to delete this request?')) {
+                                onDeleteRequest(req.id);
+                             }
+                          }}
+                          className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"
+                          title="Delete Request"
+                       >
+                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                       </button>
+                     )}
                   </div>
                 </div>
                 

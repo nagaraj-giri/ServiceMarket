@@ -1,32 +1,36 @@
+
 import React, { useState, useEffect, useRef } from 'react';
-import { UserRole } from '../types';
+import { UserRole, DirectMessage } from '../types';
+import { api } from '../services/api';
 
 interface DirectMessageModalProps {
   recipientName: string;
-  currentUserRole: UserRole;
+  recipientId: string;
+  currentUser: { id: string, role: UserRole };
   onClose: () => void;
 }
 
-const DirectMessageModal: React.FC<DirectMessageModalProps> = ({ recipientName, currentUserRole, onClose }) => {
-  // Initial messages depend on who is viewing
-  // If User is viewing, they see a message FROM provider.
-  // If Provider is viewing, they see a message FROM user.
-  const [messages, setMessages] = useState<{id: number, sender: 'user' | 'provider', text: string}[]>([]);
+const DirectMessageModal: React.FC<DirectMessageModalProps> = ({ recipientName, recipientId, currentUser, onClose }) => {
+  const [messages, setMessages] = useState<DirectMessage[]>([]);
   const [inputText, setInputText] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const fetchMessages = async () => {
+    if (!currentUser) return;
+    const msgs = await api.getMessages(currentUser.id, recipientId);
+    setMessages(msgs);
+  };
 
   useEffect(() => {
-    // Initialize mock conversation
-    if (currentUserRole === UserRole.USER) {
-      setMessages([
-        { id: 1, sender: 'provider', text: `Hello! Regarding your request. How can I assist you today?` }
-      ]);
-    } else {
-      setMessages([
-        { id: 1, sender: 'user', text: `Hi, I saw your quote. Can we discuss the timeline?` }
-      ]);
-    }
-  }, [currentUserRole]);
+    fetchMessages();
+    // Poll for new messages every 2 seconds
+    pollingRef.current = setInterval(fetchMessages, 2000);
+
+    return () => {
+      if (pollingRef.current) clearInterval(pollingRef.current);
+    };
+  }, [currentUser.id, recipientId]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -34,35 +38,17 @@ const DirectMessageModal: React.FC<DirectMessageModalProps> = ({ recipientName, 
 
   useEffect(scrollToBottom, [messages]);
 
-  const handleSend = (e: React.FormEvent) => {
+  const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!inputText.trim()) return;
 
-    // "Me" depends on the role
-    const mySenderType = currentUserRole === UserRole.USER ? 'user' : 'provider';
-    const otherSenderType = currentUserRole === UserRole.USER ? 'provider' : 'user';
-
-    setMessages(prev => [...prev, { id: Date.now(), sender: mySenderType, text: inputText }]);
-    setInputText('');
-
-    // Mock auto-reply
-    setTimeout(() => {
-      const replyText = currentUserRole === UserRole.USER 
-        ? "Thank you for the message. I'll review this and get back to you shortly."
-        : "Thanks for the update. That sounds good.";
-      
-      setMessages(prev => [...prev, { 
-        id: Date.now() + 1, 
-        sender: otherSenderType, 
-        text: replyText 
-      }]);
-    }, 1500);
-  };
-
-  // Helper to determine if the message is from "Me"
-  const isMe = (sender: 'user' | 'provider') => {
-    if (currentUserRole === UserRole.USER) return sender === 'user';
-    return sender === 'provider';
+    try {
+      await api.sendMessage(currentUser.id, recipientId, inputText);
+      setInputText('');
+      fetchMessages(); // Refresh immediately
+    } catch (err) {
+      console.error("Failed to send message", err);
+    }
   };
 
   return (
@@ -95,20 +81,25 @@ const DirectMessageModal: React.FC<DirectMessageModalProps> = ({ recipientName, 
 
         {/* Chat Area */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
-           <div className="text-center text-xs text-gray-400 my-4">
-             <span>Today</span>
-           </div>
-          {messages.map((msg) => (
-            <div key={msg.id} className={`flex ${isMe(msg.sender) ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[85%] px-4 py-2.5 shadow-sm text-sm ${
-                isMe(msg.sender)
-                  ? 'bg-dubai-blue text-white rounded-2xl rounded-tr-sm' 
-                  : 'bg-white text-gray-800 border border-gray-100 rounded-2xl rounded-tl-sm'
-              }`}>
-                {msg.text}
+           {messages.length === 0 && (
+             <div className="text-center text-xs text-gray-400 my-10">
+               <p>Start a conversation with {recipientName}</p>
+             </div>
+           )}
+          {messages.map((msg) => {
+            const isMe = msg.senderId === currentUser.id;
+            return (
+              <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
+                <div className={`max-w-[85%] px-4 py-2.5 shadow-sm text-sm ${
+                  isMe
+                    ? 'bg-dubai-blue text-white rounded-2xl rounded-tr-sm' 
+                    : 'bg-white text-gray-800 border border-gray-100 rounded-2xl rounded-tl-sm'
+                }`}>
+                  {msg.content}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
           <div ref={messagesEndRef} />
         </div>
 

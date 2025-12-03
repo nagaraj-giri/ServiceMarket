@@ -1,9 +1,12 @@
-import { ServiceRequest, ProviderProfile, UserRole, Quote, Review, ServiceCategory } from '../types';
+
+import { ServiceRequest, ProviderProfile, UserRole, Quote, Review, ServiceCategory, User, DirectMessage, Conversation } from '../types';
 
 // Storage Keys
 const KEYS = {
   REQUESTS: 'dubailink_requests',
   PROVIDERS: 'dubailink_providers',
+  USERS: 'dubailink_users',
+  CURRENT_USER: 'dubailink_current_user',
   CHATS: 'dubailink_chats'
 };
 
@@ -11,6 +14,22 @@ const KEYS = {
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 // --- Seed Data ---
+
+const SEED_USERS: User[] = [
+  {
+    id: 'user_1',
+    name: 'Sarah Jenkins',
+    email: 'sarah@example.com',
+    role: UserRole.USER
+  },
+  {
+    id: 'prov_1',
+    name: 'Elite Visa Services',
+    email: 'contact@elitevisa.ae',
+    role: UserRole.PROVIDER,
+    companyName: 'Elite Visa Services'
+  }
+];
 
 const SEED_PROVIDERS: ProviderProfile[] = [
   {
@@ -81,7 +100,8 @@ const SEED_REQUESTS: ServiceRequest[] = [
         verified: true,
         status: 'pending'
       }
-    ]
+    ],
+    isDeleted: false
   },
   {
     id: 'req_2',
@@ -92,7 +112,8 @@ const SEED_REQUESTS: ServiceRequest[] = [
     status: 'open',
     locality: 'Dubai South',
     createdAt: new Date(Date.now() - 172800000).toISOString(),
-    quotes: []
+    quotes: [],
+    isDeleted: false
   }
 ];
 
@@ -107,6 +128,74 @@ export const api = {
     if (!localStorage.getItem(KEYS.REQUESTS)) {
       localStorage.setItem(KEYS.REQUESTS, JSON.stringify(SEED_REQUESTS));
     }
+    if (!localStorage.getItem(KEYS.USERS)) {
+      localStorage.setItem(KEYS.USERS, JSON.stringify(SEED_USERS));
+    }
+  },
+
+  // Auth Methods
+  login: async (email: string): Promise<User> => {
+    await delay(800);
+    const users: User[] = JSON.parse(localStorage.getItem(KEYS.USERS) || '[]');
+    const user = users.find(u => u.email.toLowerCase() === email.toLowerCase());
+    
+    if (!user) {
+      throw new Error('User not found. Try "sarah@example.com" or "contact@elitevisa.ae"');
+    }
+    
+    localStorage.setItem(KEYS.CURRENT_USER, JSON.stringify(user));
+    return user;
+  },
+
+  register: async (userData: Omit<User, 'id'>): Promise<User> => {
+    await delay(1000);
+    const users: User[] = JSON.parse(localStorage.getItem(KEYS.USERS) || '[]');
+    
+    if (users.some(u => u.email.toLowerCase() === userData.email.toLowerCase())) {
+      throw new Error('Email already registered');
+    }
+
+    const newUser: User = {
+      id: userData.role === UserRole.PROVIDER ? `prov_${Date.now()}` : `user_${Date.now()}`,
+      ...userData
+    };
+
+    users.push(newUser);
+    localStorage.setItem(KEYS.USERS, JSON.stringify(users));
+    
+    // If provider, create a basic profile too
+    if (userData.role === UserRole.PROVIDER) {
+      const providers: ProviderProfile[] = JSON.parse(localStorage.getItem(KEYS.PROVIDERS) || '[]');
+      const newProvider: ProviderProfile = {
+        id: newUser.id,
+        name: userData.companyName || userData.name,
+        tagline: 'New Service Provider',
+        rating: 0,
+        reviewCount: 0,
+        badges: ['New'],
+        isVerified: false,
+        description: 'No description yet.',
+        services: [],
+        location: 'Dubai, UAE',
+        reviews: []
+      };
+      providers.push(newProvider);
+      localStorage.setItem(KEYS.PROVIDERS, JSON.stringify(providers));
+    }
+
+    localStorage.setItem(KEYS.CURRENT_USER, JSON.stringify(newUser));
+    return newUser;
+  },
+
+  logout: async (): Promise<void> => {
+    await delay(200);
+    localStorage.removeItem(KEYS.CURRENT_USER);
+  },
+
+  getCurrentUser: async (): Promise<User | null> => {
+    // Check local storage synchronously for speed, but wrap in promise
+    const data = localStorage.getItem(KEYS.CURRENT_USER);
+    return data ? JSON.parse(data) : null;
   },
 
   // Providers
@@ -161,7 +250,6 @@ export const api = {
 
   // Requests
   getRequests: async (): Promise<ServiceRequest[]> => {
-    await delay(600);
     const data = localStorage.getItem(KEYS.REQUESTS);
     // Return sorted by date desc
     const requests: ServiceRequest[] = data ? JSON.parse(data) : [];
@@ -169,7 +257,7 @@ export const api = {
   },
 
   createRequest: async (reqData: Omit<ServiceRequest, 'id' | 'status' | 'quotes' | 'createdAt'>): Promise<ServiceRequest> => {
-    await delay(1000);
+    await delay(500);
     const requests: ServiceRequest[] = JSON.parse(localStorage.getItem(KEYS.REQUESTS) || '[]');
     
     const newRequest: ServiceRequest = {
@@ -177,6 +265,7 @@ export const api = {
       status: 'open',
       createdAt: new Date().toISOString(),
       quotes: [],
+      isDeleted: false,
       ...reqData
     };
 
@@ -184,9 +273,39 @@ export const api = {
     return newRequest;
   },
 
+  // Soft delete
+  deleteRequest: async (requestId: string): Promise<void> => {
+    await delay(500);
+    const requests: ServiceRequest[] = JSON.parse(localStorage.getItem(KEYS.REQUESTS) || '[]');
+    const index = requests.findIndex(r => r.id === requestId);
+    if (index !== -1) {
+      requests[index].isDeleted = true;
+      localStorage.setItem(KEYS.REQUESTS, JSON.stringify(requests));
+    }
+  },
+
+  // Restore deleted request
+  restoreRequest: async (requestId: string): Promise<void> => {
+    await delay(500);
+    const requests: ServiceRequest[] = JSON.parse(localStorage.getItem(KEYS.REQUESTS) || '[]');
+    const index = requests.findIndex(r => r.id === requestId);
+    if (index !== -1) {
+      requests[index].isDeleted = false;
+      localStorage.setItem(KEYS.REQUESTS, JSON.stringify(requests));
+    }
+  },
+
+  // Permanent delete
+  permanentDeleteRequest: async (requestId: string): Promise<void> => {
+    await delay(500);
+    const requests: ServiceRequest[] = JSON.parse(localStorage.getItem(KEYS.REQUESTS) || '[]');
+    const filteredRequests = requests.filter(r => r.id !== requestId);
+    localStorage.setItem(KEYS.REQUESTS, JSON.stringify(filteredRequests));
+  },
+
   // Quotes
   submitQuote: async (requestId: string, provider: ProviderProfile, quoteData: { price: number, timeline: string, description: string }): Promise<ServiceRequest> => {
-    await delay(1000);
+    await delay(500);
     const requests: ServiceRequest[] = JSON.parse(localStorage.getItem(KEYS.REQUESTS) || '[]');
     const reqIndex = requests.findIndex(r => r.id === requestId);
     if (reqIndex === -1) throw new Error('Request not found');
@@ -214,7 +333,7 @@ export const api = {
   },
 
   acceptQuote: async (requestId: string, quoteId: string): Promise<ServiceRequest> => {
-    await delay(800);
+    await delay(500);
     const requests: ServiceRequest[] = JSON.parse(localStorage.getItem(KEYS.REQUESTS) || '[]');
     const reqIndex = requests.findIndex(r => r.id === requestId);
     if (reqIndex === -1) throw new Error('Request not found');
@@ -233,7 +352,7 @@ export const api = {
   },
 
   completeOrder: async (requestId: string): Promise<ServiceRequest> => {
-    await delay(1000);
+    await delay(500);
     const requests: ServiceRequest[] = JSON.parse(localStorage.getItem(KEYS.REQUESTS) || '[]');
     const reqIndex = requests.findIndex(r => r.id === requestId);
     if (reqIndex === -1) throw new Error('Request not found');
@@ -244,6 +363,74 @@ export const api = {
     requests[reqIndex] = updatedRequest;
     localStorage.setItem(KEYS.REQUESTS, JSON.stringify(requests));
     return updatedRequest;
+  },
+
+  // Chat / Messages
+  getMessages: async (userId: string, otherUserId: string): Promise<DirectMessage[]> => {
+    // No artificial delay for chat to feel snappy
+    const allChats: DirectMessage[] = JSON.parse(localStorage.getItem(KEYS.CHATS) || '[]');
+    return allChats.filter(msg => 
+      (msg.senderId === userId && msg.recipientId === otherUserId) ||
+      (msg.senderId === otherUserId && msg.recipientId === userId)
+    ).sort((a, b) => a.timestamp - b.timestamp);
+  },
+
+  sendMessage: async (senderId: string, recipientId: string, content: string): Promise<DirectMessage> => {
+    const allChats: DirectMessage[] = JSON.parse(localStorage.getItem(KEYS.CHATS) || '[]');
+    const newMessage: DirectMessage = {
+      id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      senderId,
+      recipientId,
+      content,
+      timestamp: Date.now(),
+      read: false
+    };
+
+    allChats.push(newMessage);
+    localStorage.setItem(KEYS.CHATS, JSON.stringify(allChats));
+    return newMessage;
+  },
+
+  getConversations: async (userId: string): Promise<Conversation[]> => {
+    const allChats: DirectMessage[] = JSON.parse(localStorage.getItem(KEYS.CHATS) || '[]');
+    const users: User[] = JSON.parse(localStorage.getItem(KEYS.USERS) || '[]');
+    const providers: ProviderProfile[] = JSON.parse(localStorage.getItem(KEYS.PROVIDERS) || '[]');
+    
+    // Group by other participant
+    const groups: { [key: string]: DirectMessage[] } = {};
+    
+    allChats.forEach(msg => {
+        if (msg.senderId === userId || msg.recipientId === userId) {
+            const otherId = msg.senderId === userId ? msg.recipientId : msg.senderId;
+            if (!groups[otherId]) groups[otherId] = [];
+            groups[otherId].push(msg);
+        }
+    });
+
+    const conversations: Conversation[] = Object.keys(groups).map(otherId => {
+        const msgs = groups[otherId].sort((a, b) => b.timestamp - a.timestamp); // Descending
+        const lastMsg = msgs[0];
+        const unreadCount = msgs.filter(m => m.recipientId === userId && !m.read).length;
+        
+        // Resolve name
+        let name = 'Unknown User';
+        const userObj = users.find(u => u.id === otherId);
+        if (userObj) name = userObj.name;
+        else {
+             const provObj = providers.find(p => p.id === otherId);
+             if (provObj) name = provObj.name;
+        }
+
+        return {
+            otherUserId: otherId,
+            otherUserName: name,
+            lastMessage: lastMsg.content,
+            timestamp: lastMsg.timestamp,
+            unreadCount
+        };
+    });
+
+    return conversations.sort((a, b) => b.timestamp - a.timestamp);
   }
 };
 

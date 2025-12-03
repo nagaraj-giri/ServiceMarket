@@ -1,15 +1,19 @@
-import React from 'react';
-import { UserRole } from '../types';
+
+import React, { useState } from 'react';
+import { UserRole, User } from '../types';
 
 interface LayoutProps {
   children: React.ReactNode;
-  activeRole: UserRole;
-  setActiveRole: (role: UserRole) => void;
+  user: User | null;
   currentPage: string;
   setCurrentPage: (page: string) => void;
+  onLogout: () => void;
+  onLoginClick: () => void;
 }
 
-const Layout: React.FC<LayoutProps> = ({ children, activeRole, setActiveRole, currentPage, setCurrentPage }) => {
+const Layout: React.FC<LayoutProps> = ({ children, user, currentPage, setCurrentPage, onLogout, onLoginClick }) => {
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
+
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col font-sans text-gray-800">
       {/* Top Navigation */}
@@ -35,39 +39,76 @@ const Layout: React.FC<LayoutProps> = ({ children, activeRole, setActiveRole, cu
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
                 Ask AI Guide
               </button>
-              <button 
-                onClick={() => setCurrentPage('dashboard')}
-                className={`${currentPage === 'dashboard' ? 'text-dubai-blue border-b-2 border-dubai-blue' : 'text-gray-500 hover:text-gray-900'} px-1 pt-1 text-sm font-medium h-16`}
-              >
-                My Dashboard
-              </button>
+              {user && (
+                <button 
+                  onClick={() => setCurrentPage('dashboard')}
+                  className={`${currentPage === 'dashboard' ? 'text-dubai-blue border-b-2 border-dubai-blue' : 'text-gray-500 hover:text-gray-900'} px-1 pt-1 text-sm font-medium h-16`}
+                >
+                  My Dashboard
+                </button>
+              )}
             </div>
 
             <div className="flex items-center space-x-4">
-              {/* Profile Icon */}
-              <button 
-                onClick={() => setCurrentPage('profile-settings')}
-                className={`p-2 rounded-full transition-colors mr-1 ${currentPage === 'profile-settings' ? 'bg-gray-100 text-dubai-gold' : 'text-gray-400 hover:text-dubai-gold hover:bg-gray-50'}`}
-                title="Edit Profile"
-              >
-                <span className="sr-only">Edit Profile</span>
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.121 17.804A13.937 13.937 0 0112 16c2.5 0 4.847.655 6.879 1.804M15 10a3 3 0 11-6 0 3 3 0 016 0zm6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-              </button>
-
-              <div className="h-6 w-px bg-gray-200"></div>
-
-              <div className="flex items-center gap-2">
-                <div className="text-xs text-gray-400">View as:</div>
-                <select 
-                  value={activeRole} 
-                  onChange={(e) => setActiveRole(e.target.value as UserRole)}
-                  className="text-sm border-gray-300 rounded-md shadow-sm focus:border-dubai-gold focus:ring focus:ring-dubai-gold focus:ring-opacity-50"
-                >
-                  <option value={UserRole.USER}>User</option>
-                  <option value={UserRole.PROVIDER}>Provider</option>
-                  <option value={UserRole.ADMIN}>Admin</option>
-                </select>
-              </div>
+              {user ? (
+                <div className="relative">
+                  <div 
+                    className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 p-2 rounded-lg transition-colors"
+                    onClick={() => setShowProfileMenu(!showProfileMenu)}
+                  >
+                     <div className="w-8 h-8 rounded-full bg-dubai-gold text-white flex items-center justify-center font-bold text-sm">
+                       {user.name.charAt(0)}
+                     </div>
+                     <div className="hidden md:block text-left">
+                       <p className="text-sm font-medium text-gray-700 leading-none">{user.name}</p>
+                       <p className="text-xs text-gray-500 mt-0.5 capitalize">{user.role.toLowerCase()}</p>
+                     </div>
+                     <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                  </div>
+                  
+                  {showProfileMenu && (
+                    <>
+                      <div className="fixed inset-0 z-10" onClick={() => setShowProfileMenu(false)}></div>
+                      <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg py-1 z-20 ring-1 ring-black ring-opacity-5 animate-in fade-in duration-150">
+                        <button 
+                          onClick={() => { setShowProfileMenu(false); setCurrentPage('profile-settings'); }}
+                          className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+                        >
+                          {user.role === UserRole.PROVIDER ? 'Storefront Settings' : 'Profile Settings'}
+                        </button>
+                        <button 
+                          onClick={() => { setShowProfileMenu(false); setCurrentPage('dashboard'); }}
+                          className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+                        >
+                          Dashboard
+                        </button>
+                        <div className="border-t border-gray-100 my-1"></div>
+                        <button 
+                          onClick={() => { setShowProfileMenu(false); onLogout(); }}
+                          className="block px-4 py-2 text-sm text-red-600 hover:bg-gray-100 w-full text-left"
+                        >
+                          Sign out
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              ) : (
+                <div className="flex items-center gap-3">
+                  <button 
+                    onClick={onLoginClick}
+                    className="text-gray-600 hover:text-gray-900 text-sm font-medium"
+                  >
+                    Sign In
+                  </button>
+                  <button 
+                    onClick={onLoginClick}
+                    className="bg-dubai-dark text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-black transition-colors"
+                  >
+                    Get Started
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>
