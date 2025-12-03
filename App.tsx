@@ -13,13 +13,14 @@ import QuoteDetailsModal from './components/QuoteDetailsModal';
 import AuthPage from './components/AuthPage';
 import Toast from './components/Toast';
 import MessagesPage from './components/MessagesPage';
-import { UserRole, ServiceRequest, ProviderProfile as IProviderProfile, Review, Quote, User, Conversation, Notification } from './types';
+import { UserRole, ServiceRequest, ProviderProfile as IProviderProfile, Quote, User, Conversation, Notification, ServiceCategory } from './types';
 import { api } from './services/api';
 
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [currentPage, setCurrentPage] = useState<string>('home');
   const [showRequestForm, setShowRequestForm] = useState(false);
+  const [requestCategory, setRequestCategory] = useState<ServiceCategory | undefined>(undefined);
   
   // Data State
   const [requests, setRequests] = useState<ServiceRequest[]>([]);
@@ -35,6 +36,7 @@ const App: React.FC = () => {
   const [activeChat, setActiveChat] = useState<{name: string, id: string} | null>(null);
   const [quoteToAccept, setQuoteToAccept] = useState<{ requestId: string, quote: Quote } | null>(null);
   const [viewingQuote, setViewingQuote] = useState<Quote | null>(null);
+  const [isAiOpen, setIsAiOpen] = useState(false);
   
   // Notification State
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -60,7 +62,6 @@ const App: React.FC = () => {
          const notifs = await api.getNotifications(currentUser.id);
          setNotifications(notifs);
 
-         // Show Toast for new Notifications
          if (notifs.length > prevNotifCount && prevNotifCount > 0) {
             const newest = notifs[0];
             if (!newest.read) {
@@ -69,16 +70,13 @@ const App: React.FC = () => {
          }
          setPrevNotifCount(notifs.length);
          
-         // Logic for Provider Notifications: "New Lead Received" (Keep this as well for specific location matches)
          if (currentUser.role === UserRole.PROVIDER) {
             const me = fetchedProviders.find(p => p.id === currentUser.id);
             if (me && me.location) {
-               // Calculate number of open leads matching this provider's location
                const matchedLeads = fetchedRequests.filter(r => {
                   const isAvailable = r.status === 'open' && !r.quotes.some(q => q.providerId === me.id);
                   if (!isAvailable) return false;
                   
-                  // Strict location matching for notification
                   if (r.locality) {
                      const reqLoc = r.locality.toLowerCase().trim();
                      const provLoc = me.location.toLowerCase().trim();
@@ -87,10 +85,8 @@ const App: React.FC = () => {
                   return false;
                });
 
-               // If count increased, assume a new lead arrived
                if (matchedLeads.length > prevLeadCount && prevLeadCount > 0) {
                   const newLead = matchedLeads[0];
-                  // Only show toast if not already covered by general notifications (which it isn't, leads are passive)
                   setToastMessage(`New Lead Received: ${newLead.title} in ${newLead.locality}`);
                }
                setPrevLeadCount(matchedLeads.length);
@@ -102,7 +98,6 @@ const App: React.FC = () => {
     }
   };
 
-  // Initialize
   useEffect(() => {
     const initApp = async () => {
       try {
@@ -118,7 +113,6 @@ const App: React.FC = () => {
     initApp();
   }, []);
 
-  // Polling
   useEffect(() => {
     if (currentUser) {
       pollingInterval.current = setInterval(fetchData, 3000);
@@ -151,6 +145,15 @@ const App: React.FC = () => {
     setPrevNotifCount(0);
   };
 
+  const openRequestForm = (category?: ServiceCategory) => {
+      if (!currentUser) {
+          setCurrentPage('dashboard'); // Redirect to auth if not logged in
+      } else {
+          setRequestCategory(category);
+          setShowRequestForm(true);
+      }
+  };
+
   const handleCreateRequest = async (requestData: any) => {
     try {
       await api.createRequest({
@@ -168,7 +171,7 @@ const App: React.FC = () => {
   const handleDeleteRequest = async (requestId: string) => {
     try {
        await api.permanentDeleteRequest(requestId);
-       await fetchData(); // Await to ensure UI updates
+       await fetchData(); 
     } catch (error) {
        console.error("Failed to delete request", error);
     }
@@ -281,13 +284,16 @@ const App: React.FC = () => {
     }
 
     if (currentPage === 'ai-assistant') {
-      return <AiAssistant />;
+       return (
+         <div className="flex flex-col items-center justify-center min-h-[50vh]">
+            <p>Please use the Ask AI Guide button in the menu.</p>
+            <button onClick={() => setCurrentPage('home')} className="mt-4 text-dubai-blue underline">Go Home</button>
+         </div>
+       );
     }
 
     if (currentPage === 'dashboard') {
       let visibleRequests = requests;
-
-      // Filter Logic for User vs Provider View
       if (currentUser?.role === UserRole.USER) {
         visibleRequests = requests.filter(r => r.userId === currentUser.id);
       } else if (currentUser?.role === UserRole.PROVIDER) {
@@ -330,105 +336,214 @@ const App: React.FC = () => {
       );
     }
 
+    // =================================================================================
+    // HOME PAGE
+    // =================================================================================
     return (
       <div className="bg-white">
-        <div className="relative bg-dubai-dark text-white overflow-hidden">
-          <div className="absolute inset-0">
-            <img 
-              src="https://images.unsplash.com/photo-1512453979798-5ea904ac6605?ixlib=rb-1.2.1&auto=format&fit=crop&w=1950&q=80" 
-              alt="Dubai Skyline" 
-              className="w-full h-full object-cover opacity-20"
-            />
-            <div className="absolute inset-0 bg-gradient-to-r from-dubai-dark to-transparent"></div>
-          </div>
-          <div className="relative max-w-7xl mx-auto px-4 py-24 sm:px-6 lg:px-8 flex flex-col items-start">
-            <h1 className="text-4xl md:text-6xl font-bold tracking-tight mb-6">
-              Dubai Services, <span className="text-dubai-gold">Simplified.</span>
-            </h1>
-            <p className="text-xl text-gray-300 max-w-2xl mb-10">
-              Connect with verified PROs, Business Consultants, and Travel Agencies. Get accurate quotes, compare prices, and handle everything online.
-            </p>
-            <div className="flex flex-col sm:flex-row gap-4">
-              <button 
-                onClick={() => {
-                   if (!currentUser) {
-                      setCurrentPage('dashboard');
-                   } else {
-                      setShowRequestForm(true);
-                   }
-                }}
-                className="bg-dubai-gold text-white px-8 py-4 rounded-lg text-lg font-bold hover:bg-yellow-600 transition-colors shadow-lg"
+        
+        {/* MOBILE LAYOUT (App Style) */}
+        <div className="md:hidden min-h-[80vh] bg-gray-50 pb-8">
+           {/* Greeting Header */}
+           <div className="bg-white px-5 py-6 rounded-b-3xl shadow-sm border-b border-gray-100 mb-6">
+              <div className="flex items-center justify-between mb-4">
+                 <div>
+                    <p className="text-xs text-gray-400 font-medium uppercase tracking-wider">Welcome</p>
+                    <h1 className="text-2xl font-bold text-gray-900">
+                       Marhaba, {currentUser ? currentUser.name.split(' ')[0] : 'Guest'}
+                    </h1>
+                 </div>
+                 {/* Decorative Icon */}
+                 <div className="w-10 h-10 rounded-full bg-dubai-gold/10 flex items-center justify-center text-dubai-gold">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                 </div>
+              </div>
+
+              {/* Search Pill */}
+              <div 
+                 onClick={() => setIsAiOpen(true)}
+                 className="w-full bg-gray-50 border border-gray-200 rounded-2xl py-3.5 px-4 flex items-center gap-3 text-gray-400 shadow-sm active:scale-[0.98] transition-transform cursor-pointer"
               >
-                Post a Request
-              </button>
-              <button 
-                onClick={() => setCurrentPage('ai-assistant')}
-                className="bg-white/10 backdrop-blur-md border border-white/20 text-white px-8 py-4 rounded-lg text-lg font-medium hover:bg-white/20 transition-colors flex items-center gap-2"
-              >
-                <span>✨</span> Research with AI
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div className="max-w-7xl mx-auto px-4 py-16 sm:px-6 lg:px-8">
-          <h2 className="text-2xl font-bold text-gray-900 mb-8">Popular Services</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            <div className="bg-gray-50 rounded-2xl p-8 hover:shadow-md transition-shadow cursor-pointer border border-gray-100 group">
-              <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center mb-6 group-hover:bg-dubai-blue transition-colors">
-                <svg className="w-6 h-6 text-blue-600 group-hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0V5a2 2 0 114 0v1m-4 0a2 2 0 104 0m-5 8a2 2 0 100-4 2 2 0 000 4zm0 0c1.306 0 2.417.835 2.83 2M9 14a3.001 3.001 0 00-2.83 2M15 11h3m-3 4h2" /></svg>
-              </div>
-              <h3 className="text-xl font-bold text-gray-900 mb-2">Golden Visa & Residencies</h3>
-              <p className="text-gray-500 mb-4">10-year Golden Visa, Green Visa, and family sponsorship.</p>
-              <span className="text-dubai-blue font-medium flex items-center gap-1 group-hover:gap-2 transition-all">Get Quotes <span>&rarr;</span></span>
-            </div>
-            
-            <div className="bg-gray-50 rounded-2xl p-8 hover:shadow-md transition-shadow cursor-pointer border border-gray-100 group">
-               <div className="w-12 h-12 bg-yellow-100 rounded-xl flex items-center justify-center mb-6 group-hover:bg-dubai-gold transition-colors">
-                <svg className="w-6 h-6 text-yellow-700 group-hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
-              </div>
-              <h3 className="text-xl font-bold text-gray-900 mb-2">Business Setup</h3>
-              <p className="text-gray-500 mb-4">Mainland & Freezone company formation, licensing, and banking.</p>
-               <span className="text-dubai-blue font-medium flex items-center gap-1 group-hover:gap-2 transition-all">Get Quotes <span>&rarr;</span></span>
-            </div>
-
-            <div className="bg-gray-50 rounded-2xl p-8 hover:shadow-md transition-shadow cursor-pointer border border-gray-100 group">
-               <div className="w-12 h-12 bg-purple-100 rounded-xl flex items-center justify-center mb-6 group-hover:bg-purple-600 transition-colors">
-                <svg className="w-6 h-6 text-purple-600 group-hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-              </div>
-              <h3 className="text-xl font-bold text-gray-900 mb-2">Tourist & Travel</h3>
-              <p className="text-gray-500 mb-4">Desert safaris, luxury stays, and 30/60 day tourist visas.</p>
-               <span className="text-dubai-blue font-medium flex items-center gap-1 group-hover:gap-2 transition-all">Get Quotes <span>&rarr;</span></span>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white border-t border-gray-100 py-16">
-           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-              <h2 className="text-2xl font-bold text-center text-gray-900 mb-12">How DubaiLink Works</h2>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-8 text-center">
-                 <div>
-                    <div className="w-10 h-10 bg-dubai-gold text-white rounded-full flex items-center justify-center font-bold mx-auto mb-4">1</div>
-                    <h3 className="font-bold text-gray-900">Post a Request</h3>
-                    <p className="text-sm text-gray-500 mt-2">Tell us what you need. AI helps you research requirements.</p>
-                 </div>
-                 <div>
-                    <div className="w-10 h-10 bg-dubai-gold text-white rounded-full flex items-center justify-center font-bold mx-auto mb-4">2</div>
-                    <h3 className="font-bold text-gray-900">Receive Quotes</h3>
-                    <p className="text-sm text-gray-500 mt-2">Get competitive offers from verified providers within 24 hours.</p>
-                 </div>
-                 <div>
-                    <div className="w-10 h-10 bg-dubai-gold text-white rounded-full flex items-center justify-center font-bold mx-auto mb-4">3</div>
-                    <h3 className="font-bold text-gray-900">Compare & Chat</h3>
-                    <p className="text-sm text-gray-500 mt-2">Check ratings, reviews, and chat directly with providers.</p>
-                 </div>
-                 <div>
-                    <div className="w-10 h-10 bg-dubai-gold text-white rounded-full flex items-center justify-center font-bold mx-auto mb-4">4</div>
-                    <h3 className="font-bold text-gray-900">Secure Service</h3>
-                    <p className="text-sm text-gray-500 mt-2">Accept the best quote and get your service delivered.</p>
-                 </div>
+                 <svg className="w-5 h-5 text-dubai-gold" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                 <span className="text-sm font-medium">Ask AI about visas, setup...</span>
               </div>
            </div>
+
+           {/* Mobile Content */}
+           <div className="px-5 space-y-6">
+              
+              {/* Promo Card */}
+              <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-dubai-dark to-gray-800 text-white shadow-lg p-5">
+                 <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full -mr-10 -mt-10 blur-xl"></div>
+                 <div className="relative z-10">
+                    <span className="text-[10px] font-bold bg-dubai-gold/20 text-dubai-gold px-2 py-0.5 rounded uppercase tracking-wide">Trending</span>
+                    <h2 className="text-lg font-bold mt-2 mb-1">Golden Visa 🇦🇪</h2>
+                    <p className="text-gray-300 text-xs mb-4 max-w-[80%]">Secure your 10-year residency today with expert guidance.</p>
+                    <button 
+                       onClick={() => openRequestForm(ServiceCategory.VISA)}
+                       className="bg-dubai-gold text-white text-xs font-bold px-4 py-2 rounded-lg hover:bg-yellow-600 transition-colors"
+                    >
+                       Post Request
+                    </button>
+                 </div>
+              </div>
+
+              {/* Service Categories Grid */}
+              <div>
+                 <h3 className="text-sm font-bold text-gray-900 mb-3">Browse Services</h3>
+                 <div className="grid grid-cols-2 gap-3">
+                    {/* Visa */}
+                    <div 
+                       onClick={() => openRequestForm(ServiceCategory.VISA)}
+                       className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center text-center active:bg-gray-50 transition-colors"
+                    >
+                       <div className="w-10 h-10 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center mb-2">
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" /></svg>
+                       </div>
+                       <span className="text-sm font-bold text-gray-800">Visas</span>
+                       <span className="text-[10px] text-gray-400">Residency & Entry</span>
+                    </div>
+
+                    {/* Business */}
+                    <div 
+                       onClick={() => openRequestForm(ServiceCategory.BUSINESS)}
+                       className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center text-center active:bg-gray-50 transition-colors"
+                    >
+                       <div className="w-10 h-10 rounded-full bg-purple-50 text-purple-600 flex items-center justify-center mb-2">
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
+                       </div>
+                       <span className="text-sm font-bold text-gray-800">Business</span>
+                       <span className="text-[10px] text-gray-400">Setup & License</span>
+                    </div>
+
+                    {/* Travel */}
+                    <div 
+                       onClick={() => openRequestForm(ServiceCategory.TRAVEL)}
+                       className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center text-center active:bg-gray-50 transition-colors"
+                    >
+                       <div className="w-10 h-10 rounded-full bg-green-50 text-green-600 flex items-center justify-center mb-2">
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
+                       </div>
+                       <span className="text-sm font-bold text-gray-800">Travel</span>
+                       <span className="text-[10px] text-gray-400">Tours & Hotels</span>
+                    </div>
+
+                    {/* Ask AI */}
+                    <div 
+                       onClick={() => setIsAiOpen(true)}
+                       className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center text-center active:bg-gray-50 transition-colors"
+                    >
+                       <div className="w-10 h-10 rounded-full bg-dubai-gold/10 text-dubai-gold flex items-center justify-center mb-2">
+                          <span className="text-lg">✨</span>
+                       </div>
+                       <span className="text-sm font-bold text-gray-800">Ask AI</span>
+                       <span className="text-[10px] text-gray-400">Instant Guide</span>
+                    </div>
+                 </div>
+              </div>
+
+              {/* Recent Activity Placeholder */}
+              <div>
+                 <div className="flex justify-between items-center mb-3">
+                    <h3 className="text-sm font-bold text-gray-900">Recent</h3>
+                    <button onClick={() => setCurrentPage('dashboard')} className="text-xs text-dubai-gold font-medium">View All</button>
+                 </div>
+                 {requests.length > 0 ? (
+                    <div onClick={() => setCurrentPage('dashboard')} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex justify-between items-center active:bg-gray-50 transition-colors">
+                       <div>
+                          <p className="text-sm font-bold text-gray-900">{requests[0].title}</p>
+                          <p className="text-xs text-gray-400">{requests[0].quotes.length} Quotes • {requests[0].status}</p>
+                       </div>
+                       <svg className="w-4 h-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                    </div>
+                 ) : (
+                    <div className="text-center py-6 bg-white rounded-xl border border-gray-100 border-dashed text-gray-400 text-xs">
+                       No recent requests
+                    </div>
+                 )}
+              </div>
+           </div>
+        </div>
+
+        {/* DESKTOP LAYOUT (Original) */}
+        <div className="hidden md:block">
+          <div className="relative bg-dubai-dark text-white overflow-hidden">
+            <div className="absolute inset-0">
+              <img 
+                src="https://images.unsplash.com/photo-1512453979798-5ea904ac6605?ixlib=rb-1.2.1&auto=format&fit=crop&w=1950&q=80" 
+                alt="Dubai Skyline" 
+                className="w-full h-full object-cover opacity-20"
+              />
+              <div className="absolute inset-0 bg-gradient-to-r from-dubai-dark to-transparent"></div>
+            </div>
+            <div className="relative max-w-7xl mx-auto px-4 py-24 sm:px-6 lg:px-8 flex flex-col items-start">
+              <h1 className="text-4xl md:text-6xl font-bold tracking-tight mb-6">
+                Dubai Services, <span className="text-dubai-gold">Simplified.</span>
+              </h1>
+              <p className="text-xl text-gray-300 max-w-2xl mb-10">
+                Connect with verified PROs, Business Consultants, and Travel Agencies. Get accurate quotes, compare prices, and handle everything online.
+              </p>
+              <div className="flex flex-col sm:flex-row gap-4">
+                <button 
+                  onClick={() => openRequestForm()}
+                  className="bg-dubai-gold text-white px-8 py-4 rounded-lg text-lg font-bold hover:bg-yellow-600 transition-colors shadow-lg"
+                >
+                  Post a Request
+                </button>
+                <button 
+                  onClick={() => setIsAiOpen(true)}
+                  className="bg-white/10 backdrop-blur-md border border-white/20 text-white px-8 py-4 rounded-lg text-lg font-medium hover:bg-white/20 transition-colors flex items-center gap-2"
+                >
+                  <span>✨</span> Research with AI
+                </button>
+              </div>
+            </div>
+          </div>
+          
+          {/* Services Section */}
+          <div className="max-w-7xl mx-auto px-4 py-16 sm:px-6 lg:px-8">
+            <h2 className="text-2xl font-bold text-gray-900 mb-8">Our Services</h2>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                {/* Visa Services */}
+                <div 
+                   onClick={() => openRequestForm(ServiceCategory.VISA)}
+                   className="bg-white rounded-2xl p-8 border border-gray-100 shadow-sm hover:shadow-md transition-shadow cursor-pointer group"
+                >
+                    <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                       <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" /></svg>
+                    </div>
+                    <h3 className="font-bold text-xl mb-2 text-gray-900">Visa Services</h3>
+                    <p className="text-gray-500 mb-6">Golden Visa, Freelance, Family & Tourist Visas.</p>
+                    <span className="text-dubai-blue text-sm font-bold group-hover:underline">Post Request &rarr;</span>
+                </div>
+
+                {/* Business Setup */}
+                <div 
+                   onClick={() => openRequestForm(ServiceCategory.BUSINESS)}
+                   className="bg-white rounded-2xl p-8 border border-gray-100 shadow-sm hover:shadow-md transition-shadow cursor-pointer group"
+                >
+                    <div className="w-12 h-12 bg-purple-50 text-purple-600 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                       <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
+                    </div>
+                    <h3 className="font-bold text-xl mb-2 text-gray-900">Business Setup</h3>
+                    <p className="text-gray-500 mb-6">Mainland & Freezone Company Formation.</p>
+                    <span className="text-dubai-blue text-sm font-bold group-hover:underline">Post Request &rarr;</span>
+                </div>
+
+                {/* Travel Packages */}
+                <div 
+                   onClick={() => openRequestForm(ServiceCategory.TRAVEL)}
+                   className="bg-white rounded-2xl p-8 border border-gray-100 shadow-sm hover:shadow-md transition-shadow cursor-pointer group"
+                >
+                    <div className="w-12 h-12 bg-green-50 text-green-600 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                       <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
+                    </div>
+                    <h3 className="font-bold text-xl mb-2 text-gray-900">Travel Packages</h3>
+                    <p className="text-gray-500 mb-6">Hotel Bookings, Flights & Desert Safaris.</p>
+                    <span className="text-dubai-blue text-sm font-bold group-hover:underline">Post Request &rarr;</span>
+                </div>
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -441,9 +556,11 @@ const App: React.FC = () => {
       setCurrentPage={setCurrentPage} 
       onLogout={handleLogout}
       onLoginClick={() => setCurrentPage('dashboard')}
+      onPostRequest={() => { setRequestCategory(undefined); setShowRequestForm(true); }}
       notifications={notifications}
       onMarkRead={(id) => api.markNotificationAsRead(id).then(fetchData)}
       onMarkAllRead={() => currentUser && api.markAllNotificationsAsRead(currentUser.id).then(fetchData)}
+      onToggleAi={() => setIsAiOpen(!isAiOpen)}
     >
       {renderContent()}
 
@@ -453,10 +570,15 @@ const App: React.FC = () => {
         onClose={() => setToastMessage(null)} 
       />
 
+      {isAiOpen && (
+        <AiAssistant onClose={() => setIsAiOpen(false)} />
+      )}
+
       {showRequestForm && (
         <RequestForm 
           onSubmit={handleCreateRequest}
           onCancel={() => setShowRequestForm(false)}
+          initialCategory={requestCategory}
         />
       )}
 

@@ -6,8 +6,8 @@ interface DashboardProps {
   role: UserRole;
   requests: ServiceRequest[];
   conversations?: Conversation[];
-  currentProvider?: ProviderProfile; // Updated to pass full profile for location access
-  currentProviderId?: string; // Kept for backward compat if needed, but currentProvider.id is better
+  currentProvider?: ProviderProfile;
+  currentProviderId?: string;
   onViewProvider?: (providerId: string) => void;
   onAcceptQuote?: (requestId: string, quoteId: string) => void;
   onChatWithProvider?: (providerId: string, providerName: string) => void;
@@ -20,57 +20,51 @@ interface DashboardProps {
 
 const RequestStatusStepper = ({ status }: { status: ServiceRequest['status'] }) => {
   const steps = [
-    { id: 'open', label: 'Request Open' },
-    { id: 'quoted', label: 'Quotes Received' },
-    { id: 'accepted', label: 'Quote Accepted' },
+    { id: 'open', label: 'Open' },
+    { id: 'quoted', label: 'Quoted' },
+    { id: 'accepted', label: 'Accepted' },
     { id: 'closed', label: 'Closed' }
   ];
 
   const currentStepIndex = Math.max(0, steps.findIndex(s => s.id === status));
 
   return (
-    <div className="px-8 py-6 border-b border-gray-50">
-      <div className="relative flex items-center justify-between">
-         {/* Background gray line */}
-        <div className="absolute left-0 top-1/2 transform -translate-y-1/2 w-full h-1 bg-gray-100 rounded-full -z-10"></div>
+    <div className="py-4 overflow-x-auto">
+      <div className="relative flex items-center justify-between min-w-[280px]">
+        {/* Background gray line */}
+        <div className="absolute left-0 top-3 w-full h-0.5 bg-gray-100 -z-10"></div>
         
         {/* Active colored line */}
         <div 
-          className="absolute left-0 top-1/2 transform -translate-y-1/2 h-1 bg-dubai-gold rounded-full -z-10 transition-all duration-500 ease-out"
+          className="absolute left-0 top-3 h-0.5 bg-dubai-gold -z-10 transition-all duration-500 ease-out"
           style={{ width: `${(currentStepIndex / (steps.length - 1)) * 100}%` }}
         ></div>
 
         {steps.map((step, index) => {
-          const isCompleted = index < currentStepIndex;
+          const isCompleted = index <= currentStepIndex;
           const isCurrent = index === currentStepIndex;
           
           return (
-            <div key={step.id} className="relative flex flex-col items-center group">
+            <div key={step.id} className="flex flex-col items-center">
               <div 
-                className={`w-8 h-8 rounded-full flex items-center justify-center border-2 transition-all duration-300 z-10
-                  ${isCompleted 
-                    ? 'bg-dubai-gold border-dubai-gold text-white' 
-                    : isCurrent 
-                      ? 'bg-white border-dubai-gold text-dubai-gold ring-4 ring-yellow-50 shadow-sm' 
-                      : 'bg-white border-gray-200 text-gray-300'}
+                className={`w-6 h-6 rounded-full flex items-center justify-center border-2 transition-all duration-300 bg-white
+                  ${isCompleted ? 'border-dubai-gold text-dubai-gold' : 'border-gray-200 text-transparent'}
+                  ${isCurrent ? 'ring-2 ring-yellow-100 scale-110' : ''}
                 `}
               >
-                {isCompleted ? (
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
+                {index < currentStepIndex ? (
+                  <svg className="w-3 h-3 text-dubai-gold" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
                 ) : (
-                  <span className="text-xs font-bold">{index + 1}</span>
+                  <div className={`w-2 h-2 rounded-full ${isCompleted ? 'bg-dubai-gold' : 'bg-gray-200'}`}></div>
                 )}
               </div>
-              <span className={`absolute top-10 w-32 text-center text-xs font-medium transition-colors duration-300
-                ${isCurrent ? 'text-dubai-dark font-bold' : isCompleted ? 'text-dubai-dark' : 'text-gray-400'}
-              `}>
+              <span className={`mt-2 text-[10px] font-medium uppercase tracking-wide ${isCurrent ? 'text-dubai-dark font-bold' : 'text-gray-400'}`}>
                 {step.label}
               </span>
             </div>
           );
         })}
       </div>
-      <div className="h-6"></div> {/* Spacer for the absolute positioned text labels */}
     </div>
   );
 };
@@ -89,200 +83,115 @@ const Dashboard: React.FC<DashboardProps> = ({ role, requests, conversations = [
     setExpandedRequestIds(newSet);
   };
 
+  // ----------------------------------------------------------------------
+  // PROVIDER DASHBOARD
+  // ----------------------------------------------------------------------
   if (role === UserRole.PROVIDER && activeProviderId) {
-    // Separate requests into "New Opportunities" (Leads) and "My Quotes"
-    
-    // Filter logic:
-    // 1. Not closed/accepted
-    // 2. Not already quoted by me
-    // 3. LOCATION MATCH: Request locality must be within Provider location (or vice versa)
     const newLeads = requests.filter(r => {
       const isAvailable = r.status !== 'closed' && r.status !== 'accepted' && !r.quotes.some(q => q.providerId === activeProviderId);
-      
       if (!isAvailable) return false;
-
-      // Location Filter
       if (currentProvider && r.locality && currentProvider.location) {
         const reqLoc = r.locality.toLowerCase().trim();
         const provLoc = currentProvider.location.toLowerCase().trim();
-        // Fuzzy match: check if one string contains the other
-        const isMatch = provLoc.includes(reqLoc) || reqLoc.includes(provLoc);
-        return isMatch;
+        return provLoc.includes(reqLoc) || reqLoc.includes(provLoc);
       }
-      
-      // If request has no locality, or provider has no location, defaulting to show (or hide based on preference).
-      // Prompt says "Only to that providers query to be shared", implying strictness.
-      // If request has a locality but provider doesn't match -> hide.
-      if (r.locality && currentProvider?.location) {
-         return false; 
-      }
-
+      if (r.locality && currentProvider?.location) return false; 
       return true;
     });
 
-    const myQuotes = requests.filter(r => 
-      r.quotes.some(q => q.providerId === activeProviderId)
-    );
-
-    // Calculate real-time stats
-    const activeLeadsCount = newLeads.length;
-    
-    // Calculate revenue: Sum of prices of accepted/closed quotes for this provider
+    const myQuotes = requests.filter(r => r.quotes.some(q => q.providerId === activeProviderId));
     const revenue = myQuotes.reduce((total, req) => {
       const myQuote = req.quotes.find(q => q.providerId === activeProviderId);
-      if (myQuote && (myQuote.status === 'accepted')) {
-        return total + myQuote.price;
-      }
-      return total;
+      return (myQuote && myQuote.status === 'accepted') ? total + myQuote.price : total;
     }, 0);
-
     const totalUnread = conversations.reduce((sum, c) => sum + c.unreadCount, 0);
 
     return (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <h1 className="text-2xl font-bold text-gray-900 mb-6">Provider Dashboard</h1>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-            <h3 className="text-gray-500 text-sm font-medium">Active Leads</h3>
-            <p className="text-3xl font-bold text-dubai-blue mt-2">{activeLeadsCount}</p>
-            {currentProvider?.location && <p className="text-xs text-gray-400 mt-1">In {currentProvider.location}</p>}
+        {/* Stats Grid */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+          <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100">
+            <h3 className="text-gray-500 text-xs font-bold uppercase tracking-wide">Active Leads</h3>
+            <p className="text-3xl font-bold text-dubai-blue mt-1">{newLeads.length}</p>
           </div>
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-            <h3 className="text-gray-500 text-sm font-medium">Submitted Quotes</h3>
-            <p className="text-3xl font-bold text-dubai-gold mt-2">{myQuotes.length}</p>
+          <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100">
+            <h3 className="text-gray-500 text-xs font-bold uppercase tracking-wide">Submitted Quotes</h3>
+            <p className="text-3xl font-bold text-dubai-gold mt-1">{myQuotes.length}</p>
           </div>
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-            <h3 className="text-gray-500 text-sm font-medium">Revenue (AED)</h3>
-            <p className="text-3xl font-bold text-gray-900 mt-2">{revenue.toLocaleString()}</p>
+          <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100">
+            <h3 className="text-gray-500 text-xs font-bold uppercase tracking-wide">Revenue</h3>
+            <p className="text-3xl font-bold text-gray-900 mt-1"><span className="text-sm font-normal text-gray-400 mr-1">AED</span>{revenue.toLocaleString()}</p>
           </div>
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-            <h3 className="text-gray-500 text-sm font-medium">Unread Messages</h3>
-            <p className={`text-3xl font-bold mt-2 ${totalUnread > 0 ? 'text-green-600' : 'text-gray-900'}`}>{totalUnread}</p>
+          <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100">
+             <h3 className="text-gray-500 text-xs font-bold uppercase tracking-wide">Messages</h3>
+             <p className={`text-3xl font-bold mt-1 ${totalUnread > 0 ? 'text-green-500' : 'text-gray-400'}`}>{totalUnread}</p>
           </div>
         </div>
 
+        {/* Leads and Quotes Split View */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Incoming Requests */}
+          {/* New Leads Column */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden flex flex-col h-[600px]">
-            <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50">
-              <h2 className="text-lg font-semibold text-gray-900">New Service Requests</h2>
-              <span className="text-xs font-medium px-2.5 py-0.5 rounded-full bg-green-100 text-green-800 animate-pulse">Live</span>
+             <div className="p-4 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
+              <h2 className="font-bold text-gray-900">New Opportunities</h2>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-green-100 text-green-800">LIVE</span>
             </div>
-            <div className="divide-y divide-gray-100 overflow-y-auto flex-1">
-              {newLeads.length > 0 ? (
-                newLeads.map(req => (
-                  <div key={req.id} className="p-6 hover:bg-gray-50 transition-colors">
-                    <div className="flex justify-between items-start mb-2">
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                        {req.category}
-                      </span>
-                      <span className="text-xs text-gray-400">{new Date(req.createdAt).toLocaleDateString()}</span>
-                    </div>
-                    <h3 className="text-base font-medium text-gray-900">{req.title}</h3>
-                    {req.locality && (
-                      <div className="flex items-center text-xs text-gray-500 mt-1">
-                        <svg className="w-3.5 h-3.5 mr-1 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-                        {req.locality}
-                      </div>
-                    )}
-                    <p className="mt-1 text-sm text-gray-500 line-clamp-2">{req.description}</p>
-                    <div className="mt-4 flex gap-2">
-                      <button 
-                        onClick={() => onSubmitQuote && onSubmitQuote(req.id)}
-                        className="text-sm bg-dubai-gold text-white px-4 py-2 rounded-lg hover:bg-yellow-600 transition-colors shadow-sm"
-                      >
-                        Submit Quote
-                      </button>
-                      <button 
-                        onClick={() => onIgnoreRequest && onIgnoreRequest(req.id)}
-                        className="text-sm border border-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors"
-                      >
-                        Ignore
-                      </button>
-                    </div>
+            <div className="overflow-y-auto flex-1 p-4 space-y-4">
+              {newLeads.length > 0 ? newLeads.map(req => (
+                <div key={req.id} className="border border-gray-200 rounded-lg p-4 hover:border-dubai-gold/50 transition-colors">
+                  <div className="flex justify-between items-start mb-2">
+                    <span className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">{req.category}</span>
+                    <span className="text-xs text-gray-400">{new Date(req.createdAt).toLocaleDateString()}</span>
                   </div>
-                ))
-              ) : (
-                <div className="p-8 text-center text-gray-500 flex flex-col items-center justify-center h-full">
-                  <svg className="w-12 h-12 text-gray-300 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
-                  </svg>
-                  No new leads available in your area.
+                  <h3 className="font-bold text-gray-900 mb-1">{req.title}</h3>
+                  {req.locality && <div className="text-xs text-gray-500 flex items-center mb-2"><svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>{req.locality}</div>}
+                  <p className="text-sm text-gray-600 line-clamp-2 mb-4">{req.description}</p>
+                  <div className="flex gap-2">
+                    <button onClick={() => onSubmitQuote && onSubmitQuote(req.id)} className="flex-1 bg-dubai-gold text-white text-sm font-bold py-2 rounded hover:bg-yellow-600">Quote</button>
+                    <button onClick={() => onIgnoreRequest && onIgnoreRequest(req.id)} className="px-4 border border-gray-300 rounded text-gray-500 hover:bg-gray-50">Ignore</button>
+                  </div>
                 </div>
+              )) : (
+                <div className="text-center py-12 text-gray-400 text-sm">No new leads matching your profile.</div>
               )}
             </div>
           </div>
 
+          {/* Messages & My Quotes */}
           <div className="flex flex-col gap-6 h-[600px]">
-            {/* Recent Messages */}
-             <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden flex flex-col h-1/2">
-               <div className="p-4 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
-                 <h2 className="text-lg font-semibold text-gray-900">Recent Messages</h2>
-                 <span className="text-xs text-dubai-blue font-semibold hover:underline cursor-pointer">View All</span>
-               </div>
-               <div className="divide-y divide-gray-100 overflow-y-auto flex-1">
-                 {conversations.length > 0 ? (
-                    conversations.map(conv => (
-                       <div key={conv.otherUserId} onClick={() => onChatWithUser && onChatWithUser(conv.otherUserId, conv.otherUserName)} className="p-4 hover:bg-gray-50 cursor-pointer transition-colors flex gap-3 items-center">
-                          <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold text-sm">
-                             {conv.otherUserName.charAt(0)}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                             <div className="flex justify-between items-baseline mb-0.5">
-                                <h4 className="text-sm font-bold text-gray-900 truncate">{conv.otherUserName}</h4>
-                                {conv.unreadCount > 0 ? (
-                                   <span className="text-xs text-green-600 font-bold bg-green-100 px-2 py-0.5 rounded-full">{conv.unreadCount} New</span>
-                                ) : (
-                                   <span className="text-xs text-gray-400">{new Date(conv.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
-                                )}
-                             </div>
-                             <p className={`text-xs truncate ${conv.unreadCount > 0 ? 'text-gray-900 font-medium' : 'text-gray-500'}`}>{conv.lastMessage}</p>
-                          </div>
-                       </div>
-                    ))
-                 ) : (
-                    <div className="p-8 text-center text-gray-500 flex flex-col items-center justify-center h-full">
-                       <p className="text-xs">No active conversations.</p>
-                    </div>
-                 )}
-               </div>
-             </div>
-
-            {/* My Submitted Quotes */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden flex flex-col h-1/2">
-              <div className="p-4 border-b border-gray-100 bg-gray-50">
-                <h2 className="text-lg font-semibold text-gray-900">My Submitted Quotes</h2>
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 flex-1 overflow-hidden flex flex-col">
+              <div className="p-4 border-b border-gray-100 bg-gray-50"><h2 className="font-bold text-gray-900">Recent Messages</h2></div>
+              <div className="overflow-y-auto flex-1 p-0">
+                 {conversations.map(c => (
+                   <div key={c.otherUserId} onClick={() => onChatWithUser && onChatWithUser(c.otherUserId, c.otherUserName)} className="p-4 border-b border-gray-50 hover:bg-gray-50 cursor-pointer flex items-center gap-3">
+                     <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold text-xs">{c.otherUserName.charAt(0)}</div>
+                     <div className="flex-1 min-w-0">
+                       <div className="flex justify-between"><span className="font-bold text-sm truncate">{c.otherUserName}</span> <span className="text-xs text-gray-400">{new Date(c.timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span></div>
+                       <p className="text-xs text-gray-500 truncate">{c.lastMessage}</p>
+                     </div>
+                   </div>
+                 ))}
+                 {conversations.length === 0 && <div className="p-8 text-center text-xs text-gray-400">No messages yet.</div>}
               </div>
-              <div className="divide-y divide-gray-100 overflow-y-auto flex-1">
-                {myQuotes.length > 0 ? (
-                  myQuotes.map(req => {
-                    const myQuote = req.quotes.find(q => q.providerId === activeProviderId);
+            </div>
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 flex-1 overflow-hidden flex flex-col">
+               <div className="p-4 border-b border-gray-100 bg-gray-50"><h2 className="font-bold text-gray-900">My Quotes</h2></div>
+               <div className="overflow-y-auto flex-1">
+                  {myQuotes.map(req => {
+                    const q = req.quotes.find(q => q.providerId === activeProviderId);
                     return (
-                      <div key={req.id} className="p-4 hover:bg-gray-50 transition-colors">
-                        <div className="flex justify-between items-start mb-1">
-                          <h3 className="text-sm font-bold text-gray-900 truncate max-w-[180px]">{req.title}</h3>
-                          {myQuote?.status === 'accepted' ? (
-                             <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-green-100 text-green-700 uppercase tracking-wide">Accepted</span>
-                          ) : myQuote?.status === 'rejected' ? (
-                             <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700 uppercase tracking-wide">Rejected</span>
-                          ) : (
-                             <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-yellow-100 text-yellow-700 uppercase tracking-wide">Pending</span>
-                          )}
+                      <div key={req.id} className="p-4 border-b border-gray-50 hover:bg-gray-50">
+                        <div className="flex justify-between mb-1">
+                          <span className="font-bold text-sm text-gray-900 truncate max-w-[60%]">{req.title}</span>
+                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded uppercase ${q?.status === 'accepted' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>{q?.status}</span>
                         </div>
-                        <div className="flex justify-between items-center mt-1 text-xs">
-                           <span className="text-gray-500">Price: <span className="text-gray-900 font-medium">{myQuote?.currency} {myQuote?.price.toLocaleString()}</span></span>
-                           <span className="text-gray-500">{myQuote?.timeline}</span>
-                        </div>
+                        <div className="text-xs text-gray-500">AED {q?.price.toLocaleString()} • {q?.timeline}</div>
                       </div>
-                    );
-                  })
-                ) : (
-                  <div className="p-8 text-center text-gray-500 flex flex-col items-center justify-center h-full">
-                     <p className="text-sm">You haven't submitted any quotes yet.</p>
-                  </div>
-                )}
-              </div>
+                    )
+                  })}
+                  {myQuotes.length === 0 && <div className="p-8 text-center text-xs text-gray-400">No quotes submitted.</div>}
+               </div>
             </div>
           </div>
         </div>
@@ -290,203 +199,150 @@ const Dashboard: React.FC<DashboardProps> = ({ role, requests, conversations = [
     );
   }
 
-  // User Dashboard View
+  // ----------------------------------------------------------------------
+  // USER DASHBOARD (REDESIGNED FOR MOBILE)
+  // ----------------------------------------------------------------------
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-gray-900">My Requests</h1>
       </div>
       
       {requests.length === 0 ? (
-        <div className="text-center py-20 bg-white rounded-xl border border-gray-200 border-dashed">
-          <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
-          </svg>
-          <h3 className="mt-2 text-sm font-medium text-gray-900">No active requests</h3>
-          <p className="mt-1 text-sm text-gray-500">Get started by creating a new service request.</p>
+        <div className="text-center py-20 bg-white rounded-xl border-2 border-dashed border-gray-200">
+           <p className="text-gray-500">You haven't posted any requests yet.</p>
         </div>
       ) : (
-        <div className="space-y-6">
+        <div className="space-y-4">
           {requests.map(req => {
-            const isRequestClosed = req.status === 'closed';
             const isExpanded = expandedRequestIds.has(req.id);
+            const isRequestClosed = req.status === 'closed';
 
             return (
               <div key={req.id} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden transition-all duration-300">
-                <div className="p-6 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
-                  <div>
-                    <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                       {req.title}
-                       {req.locality && (
-                          <span className="text-xs font-normal text-gray-500 flex items-center bg-gray-100 px-2 py-0.5 rounded-full">
-                            <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-                            {req.locality}
-                          </span>
-                       )}
-                       {!isExpanded && (
-                         <span className={`text-xs px-2 py-0.5 rounded-full font-bold uppercase tracking-wide ml-2 ${
-                            req.status === 'open' ? 'bg-blue-100 text-blue-700' :
-                            req.status === 'quoted' ? 'bg-dubai-gold/20 text-yellow-700' :
-                            req.status === 'accepted' ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-600'
+                <div className="p-5">
+                   {/* Header Area */}
+                   <div className="flex flex-col mb-4">
+                      <div className="flex justify-between items-start">
+                        <h3 className="text-lg font-bold text-gray-900 leading-tight flex-1 mr-2">
+                            {req.title}
+                        </h3>
+                        {/* Status Pill on Top Right */}
+                         <span className={`text-[10px] font-bold px-2 py-1 rounded uppercase tracking-wider whitespace-nowrap ${
+                             req.status === 'open' ? 'bg-blue-50 text-blue-600' :
+                             req.status === 'quoted' ? 'bg-dubai-gold/10 text-dubai-gold' :
+                             req.status === 'accepted' ? 'bg-green-50 text-green-600' :
+                             'bg-gray-100 text-gray-500'
                          }`}>
-                           {req.status}
+                            {req.status}
                          </span>
-                       )}
-                    </h3>
-                    <p className="text-sm text-gray-500 mt-1">
-                      Posted: {new Date(req.createdAt).toLocaleDateString()}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-4">
-                     <div className="text-right">
-                        <div className="text-2xl font-bold text-dubai-blue">{req.quotes.length}</div>
-                        <div className="text-xs text-gray-500 uppercase tracking-wide">Quotes Received</div>
-                     </div>
-                     <div className="flex items-center gap-2 border-l border-gray-200 pl-4 ml-2">
-                        <button
-                           type="button"
-                           onClick={() => toggleExpand(req.id)}
-                           className="text-xs font-medium text-gray-500 hover:text-dubai-blue flex items-center gap-1 transition-colors px-3 py-2 rounded-md hover:bg-gray-100"
-                        >
-                           {isExpanded ? 'Hide Details' : 'View Details'}
-                           <svg className={`w-4 h-4 transform transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                           </svg>
-                        </button>
-                        
-                        {/* Delete Button - Strictly Isolated */}
-                        <div className="relative group z-10">
-                            <button 
-                                type="button"
-                                onClick={(e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation(); // Critical to stop propagation
-                                    if (window.confirm('PERMANENTLY DELETE?\n\nAre you sure you want to delete this request? This action cannot be undone.')) {
-                                        if (onDeleteRequest) onDeleteRequest(req.id);
-                                    }
-                                }}
-                                className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-all border border-transparent hover:border-red-100"
-                                title="Delete Permanently"
-                                aria-label="Delete Request"
-                            >
-                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                            </button>
-                        </div>
-                     </div>
-                  </div>
+                      </div>
+                      
+                      <div className="flex items-center flex-wrap gap-2 mt-2">
+                         {req.locality && (
+                           <span className="text-[10px] font-medium text-gray-500 bg-gray-100 px-2 py-1 rounded-full flex items-center">
+                             <svg className="w-3 h-3 mr-1 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                             {req.locality}
+                           </span>
+                         )}
+                         <span className="text-[10px] text-gray-400">Posted: {new Date(req.createdAt).toLocaleDateString()}</span>
+                      </div>
+                   </div>
+
+                   {/* Key Stats & Toggles */}
+                   <div className="flex items-end justify-between border-t border-gray-50 pt-4 mt-2">
+                      <div className="flex flex-col text-center sm:text-left">
+                         <span className="text-3xl font-bold text-dubai-blue leading-none">{req.quotes.length}</span>
+                         <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Quotes Received</span>
+                      </div>
+                      
+                      <div className="flex items-center gap-4">
+                         <button 
+                            onClick={() => toggleExpand(req.id)}
+                            className="text-sm font-medium text-gray-500 hover:text-dubai-gold transition-colors flex items-center gap-1 group"
+                         >
+                            {isExpanded ? 'Hide' : 'View Details'}
+                            <svg className={`w-4 h-4 transform transition-transform duration-200 text-gray-400 group-hover:text-dubai-gold ${isExpanded ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                         </button>
+                         <button 
+                            type="button"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                if(window.confirm('Permanently delete this request?')) onDeleteRequest && onDeleteRequest(req.id);
+                            }}
+                            className="text-gray-300 hover:text-red-500 transition-colors p-1"
+                            title="Delete"
+                         >
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                         </button>
+                      </div>
+                   </div>
+
+                   {/* Expanded Content Area */}
+                   {isExpanded && (
+                      <div className="mt-6 animate-in slide-in-from-top-2 duration-300">
+                         {/* Dashed Description Box (Updated Style) */}
+                         <div className="border-2 border-dashed border-dubai-blue/20 bg-blue-50/20 rounded-xl p-4 mb-6 relative">
+                            <h4 className="text-[10px] font-bold text-dubai-blue uppercase tracking-widest mb-2">Description</h4>
+                            <p className="text-sm text-gray-700 leading-relaxed">{req.description}</p>
+                         </div>
+
+                         <div className="mb-6">
+                            <RequestStatusStepper status={req.status} />
+                         </div>
+
+                         <div className="bg-gray-50 rounded-xl p-4 md:p-6">
+                            <h4 className="text-xs font-bold text-gray-900 uppercase tracking-widest mb-4">Compare Quotes</h4>
+                            {req.quotes.length > 0 ? (
+                                <div className="space-y-3">
+                                   {/* Mobile Card Style for Quotes within the Request */}
+                                   {req.quotes.map(quote => (
+                                     <div key={quote.id} className={`bg-white border border-gray-200 rounded-lg p-4 shadow-sm ${isRequestClosed && quote.status !== 'accepted' ? 'opacity-60 grayscale' : ''}`}>
+                                        <div className="flex justify-between items-start mb-3">
+                                           <div>
+                                              <div className="font-bold text-gray-900 text-sm flex items-center gap-1">
+                                                 {quote.providerName}
+                                                 {quote.verified && <svg className="w-3 h-3 text-blue-500" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>}
+                                              </div>
+                                              <button onClick={() => onViewProvider && onViewProvider(quote.providerId)} className="text-[10px] text-gray-400 hover:text-dubai-blue hover:underline">View Profile</button>
+                                           </div>
+                                           <div className="text-right">
+                                              <div className="text-lg font-bold text-gray-900">{quote.currency} {quote.price.toLocaleString()}</div>
+                                              <div className="text-[10px] text-gray-500">{quote.timeline}</div>
+                                           </div>
+                                        </div>
+                                        <div className="flex items-center justify-between pt-3 border-t border-gray-100">
+                                            <div className="flex text-yellow-400 text-xs">
+                                                {[...Array(5)].map((_, i) => (
+                                                    <svg key={i} className={`w-3.5 h-3.5 ${i < quote.rating ? 'fill-current' : 'text-gray-200'}`} viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" /></svg>
+                                                ))}
+                                            </div>
+                                            <div className="flex gap-2">
+                                                {quote.status === 'accepted' ? (
+                                                   req.status === 'accepted' ? 
+                                                   <button onClick={() => onAcceptQuote && onAcceptQuote(req.id, quote.id)} className="bg-dubai-gold text-white text-xs font-bold px-3 py-1.5 rounded">Pay Now</button> :
+                                                   <span className="bg-green-100 text-green-700 text-xs font-bold px-2 py-1 rounded">Paid</span>
+                                                ) : isRequestClosed ? (
+                                                    <span className="text-gray-400 text-xs italic">Closed</span>
+                                                ) : (
+                                                   <>
+                                                     <button onClick={() => onViewQuote && onViewQuote(quote)} className="text-gray-500 text-xs font-medium hover:text-gray-900">View</button>
+                                                     <button onClick={() => onChatWithProvider && onChatWithProvider(quote.providerId, quote.providerName)} className="text-dubai-blue text-xs font-medium hover:text-blue-800">Chat</button>
+                                                     <button onClick={() => onAcceptQuote && onAcceptQuote(req.id, quote.id)} className="text-dubai-gold text-xs font-bold hover:text-yellow-700">Accept</button>
+                                                   </>
+                                                )}
+                                            </div>
+                                        </div>
+                                     </div>
+                                   ))}
+                                </div>
+                            ) : (
+                               <p className="text-sm text-gray-500 italic">Waiting for providers...</p>
+                            )}
+                         </div>
+                      </div>
+                   )}
                 </div>
-                
-                {/* Expandable Details Section */}
-                {isExpanded && (
-                  <div className="animate-in slide-in-from-top-2 duration-300">
-                     {/* Description */}
-                     <div className="px-8 py-4 bg-gray-50/50 border-b border-gray-100">
-                        <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Description</h4>
-                        <p className="text-gray-700 text-sm leading-relaxed max-w-3xl">{req.description}</p>
-                     </div>
-
-                     {/* Progress Stepper */}
-                     <RequestStatusStepper status={req.status} />
-
-                     <div className="p-6 pt-2">
-                        <h4 className="text-sm font-semibold text-gray-900 mb-4 uppercase tracking-wider">Compare Quotes</h4>
-                        {req.quotes.length > 0 ? (
-                        <div className="overflow-x-auto">
-                            <table className="min-w-full divide-y divide-gray-200">
-                            <thead className="bg-gray-50">
-                                <tr>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Provider</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Price (AED)</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Timeline</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rating</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Action</th>
-                                </tr>
-                            </thead>
-                            <tbody className="bg-white divide-y divide-gray-200">
-                                {req.quotes.map(quote => (
-                                <tr key={quote.id} className={isRequestClosed && quote.status !== 'accepted' ? 'opacity-50' : ''}>
-                                    <td className="px-6 py-4 whitespace-nowrap">
-                                    <div className="flex items-center">
-                                        <button 
-                                        onClick={() => onViewProvider && onViewProvider(quote.providerId)}
-                                        className="text-left group hover:opacity-80 transition-opacity"
-                                        >
-                                        <div className="text-sm font-medium text-gray-900 flex items-center gap-1 group-hover:text-dubai-blue">
-                                            {quote.providerName}
-                                            {quote.verified && <svg className="w-4 h-4 text-blue-500" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>}
-                                        </div>
-                                        <div className="text-xs text-gray-400">View Profile</div>
-                                        </button>
-                                    </div>
-                                    </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-bold">
-                                    {quote.price.toLocaleString()}
-                                    </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                    {quote.timeline}
-                                    </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                    <div className="flex text-yellow-400">
-                                        {[...Array(5)].map((_, i) => (
-                                        <svg key={i} className={`w-4 h-4 ${i < quote.rating ? 'fill-current' : 'text-gray-300'}`} viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" /></svg>
-                                        ))}
-                                    </div>
-                                    </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                                    {quote.status === 'accepted' ? (
-                                        req.status === 'accepted' ? (
-                                        <button 
-                                            onClick={() => onAcceptQuote && onAcceptQuote(req.id, quote.id)}
-                                            className="inline-flex items-center px-4 py-1.5 rounded-lg text-xs font-bold bg-dubai-gold text-white hover:bg-yellow-600 transition-colors shadow-sm"
-                                        >
-                                            Pay Now
-                                        </button>
-                                        ) : (
-                                        <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                                            <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/></svg>
-                                            Paid & Closed
-                                        </span>
-                                        )
-                                    ) : isRequestClosed ? (
-                                        <span className="text-gray-400 italic text-xs">Closed</span>
-                                    ) : (
-                                        req.status === 'accepted' ? (
-                                        <span className="text-gray-300 italic text-xs">Not Selected</span>
-                                        ) : (
-                                        <div className="flex gap-2 items-center">
-                                            <button
-                                            onClick={() => onViewQuote && onViewQuote(quote)}
-                                            className="text-gray-500 hover:text-gray-900 transition-colors"
-                                            >
-                                            View
-                                            </button>
-                                            <button 
-                                            onClick={() => onChatWithProvider && onChatWithProvider(quote.providerId, quote.providerName)}
-                                            className="text-dubai-blue hover:text-blue-900 transition-colors"
-                                            >
-                                            Chat
-                                            </button>
-                                            <button 
-                                            onClick={() => onAcceptQuote && onAcceptQuote(req.id, quote.id)}
-                                            className="text-dubai-gold hover:text-yellow-700 font-bold transition-colors"
-                                            >
-                                            Accept
-                                            </button>
-                                        </div>
-                                        )
-                                    )}
-                                    </td>
-                                </tr>
-                                ))}
-                            </tbody>
-                            </table>
-                        </div>
-                        ) : (
-                        <p className="text-sm text-gray-500 italic">Waiting for providers to submit quotes...</p>
-                        )}
-                     </div>
-                  </div>
-                )}
               </div>
             );
           })}

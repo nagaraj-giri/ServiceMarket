@@ -9,10 +9,10 @@ interface MessagesPageProps {
 
 const MessagesPage: React.FC<MessagesPageProps> = ({ conversations, onOpenChat }) => {
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
+    <div className="max-w-4xl mx-auto px-4 py-8 h-full flex flex-col">
       <h1 className="text-2xl font-bold text-gray-900 mb-6">Messages</h1>
       
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden flex-1 flex flex-col min-h-[50vh]">
         {conversations.length > 0 ? (
           <div className="divide-y divide-gray-100">
             {conversations.map((conv) => (
@@ -49,12 +49,12 @@ const MessagesPage: React.FC<MessagesPageProps> = ({ conversations, onOpenChat }
             ))}
           </div>
         ) : (
-          <div className="p-12 text-center text-gray-500">
-            <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4 text-gray-400">
+          <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
+            <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-4 text-gray-400">
                <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
             </div>
-            <h3 className="text-lg font-medium text-gray-900">No messages yet</h3>
-            <p className="mt-1 text-sm">Conversations will appear here once you chat with a provider.</p>
+            <h3 className="text-lg font-bold text-gray-900">No messages yet</h3>
+            <p className="mt-1 text-sm text-gray-500 max-w-xs">Conversations will appear here once you chat with a provider.</p>
           </div>
         )}
       </div>

@@ -7,10 +7,11 @@ import { getPlaceSuggestions } from '../services/geminiService';
 interface RequestFormProps {
   onSubmit: (request: Omit<ServiceRequest, 'id' | 'quotes' | 'status' | 'createdAt'>) => void;
   onCancel: () => void;
+  initialCategory?: ServiceCategory;
 }
 
-const RequestForm: React.FC<RequestFormProps> = ({ onSubmit, onCancel }) => {
-  const [category, setCategory] = useState<ServiceCategory>(ServiceCategory.VISA);
+const RequestForm: React.FC<RequestFormProps> = ({ onSubmit, onCancel, initialCategory }) => {
+  const [category, setCategory] = useState<ServiceCategory>(initialCategory || ServiceCategory.VISA);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [locality, setLocality] = useState('');
@@ -93,11 +94,23 @@ const RequestForm: React.FC<RequestFormProps> = ({ onSubmit, onCancel }) => {
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 backdrop-blur-sm animate-in fade-in duration-200">
+    <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-[80] backdrop-blur-sm animate-in fade-in duration-200">
       <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden transform transition-all flex flex-col max-h-[90vh]">
-        <div className="bg-dubai-dark p-6 flex-shrink-0">
-          <h2 className="text-2xl font-bold text-white">Create Service Request</h2>
-          <p className="text-gray-400 text-sm mt-1">Get quotes from verified providers.</p>
+        {/* Header with Close Button */}
+        <div className="bg-dubai-dark p-6 flex-shrink-0 flex justify-between items-start">
+          <div>
+            <h2 className="text-2xl font-bold text-white">Create Service Request</h2>
+            <p className="text-gray-400 text-sm mt-1">Get quotes from verified providers.</p>
+          </div>
+          <button 
+            onClick={onCancel}
+            className="text-gray-400 hover:text-white transition-colors bg-white/10 hover:bg-white/20 p-2 rounded-full"
+            aria-label="Close"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
         </div>
         
         <form onSubmit={handleSubmit} className="p-6 space-y-6 overflow-y-auto">
