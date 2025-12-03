@@ -1,5 +1,5 @@
 
-import { ServiceRequest, ProviderProfile, UserRole, Quote, Review, ServiceCategory, User, DirectMessage, Conversation } from '../types';
+import { ServiceRequest, ProviderProfile, UserRole, Quote, Review, ServiceCategory, User, DirectMessage, Conversation, Notification } from '../types';
 
 // Storage Keys
 const KEYS = {
@@ -7,7 +7,8 @@ const KEYS = {
   PROVIDERS: 'dubailink_providers',
   USERS: 'dubailink_users',
   CURRENT_USER: 'dubailink_current_user',
-  CHATS: 'dubailink_chats'
+  CHATS: 'dubailink_chats',
+  NOTIFICATIONS: 'dubailink_notifications'
 };
 
 // Simulated Network Delay
@@ -131,6 +132,9 @@ export const api = {
     if (!localStorage.getItem(KEYS.USERS)) {
       localStorage.setItem(KEYS.USERS, JSON.stringify(SEED_USERS));
     }
+    if (!localStorage.getItem(KEYS.NOTIFICATIONS)) {
+      localStorage.setItem(KEYS.NOTIFICATIONS, JSON.stringify([]));
+    }
   },
 
   // Auth Methods
@@ -244,6 +248,15 @@ export const api = {
 
     providers[index] = updatedProvider;
     localStorage.setItem(KEYS.PROVIDERS, JSON.stringify(providers));
+
+    // Notify Provider
+    api.createNotification({
+      userId: providerId,
+      type: 'info',
+      title: 'New Review',
+      message: `${reviewData.author} rated you ${reviewData.rating} stars.`
+    });
+
     return updatedProvider;
   },
 
@@ -306,6 +319,16 @@ export const api = {
 
     requests[reqIndex] = updatedRequest;
     localStorage.setItem(KEYS.REQUESTS, JSON.stringify(requests));
+
+    // Notify User
+    api.createNotification({
+      userId: updatedRequest.userId,
+      type: 'info',
+      title: 'New Quote Received',
+      message: `${provider.name} sent a quote of AED ${quoteData.price} for "${updatedRequest.title}".`,
+      link: 'dashboard'
+    });
+
     return updatedRequest;
   },
 
@@ -316,6 +339,8 @@ export const api = {
     if (reqIndex === -1) throw new Error('Request not found');
 
     const updatedRequest = { ...requests[reqIndex] };
+    const acceptedQuote = updatedRequest.quotes.find(q => q.id === quoteId);
+
     updatedRequest.status = 'accepted';
     
     updatedRequest.quotes = updatedRequest.quotes.map(q => ({
@@ -325,6 +350,18 @@ export const api = {
 
     requests[reqIndex] = updatedRequest;
     localStorage.setItem(KEYS.REQUESTS, JSON.stringify(requests));
+
+    // Notify Provider
+    if (acceptedQuote) {
+      api.createNotification({
+        userId: acceptedQuote.providerId,
+        type: 'success',
+        title: 'Quote Accepted!',
+        message: `Your quote for "${updatedRequest.title}" was accepted.`,
+        link: 'dashboard'
+      });
+    }
+
     return updatedRequest;
   },
 
@@ -337,8 +374,22 @@ export const api = {
     const updatedRequest = { ...requests[reqIndex] };
     updatedRequest.status = 'closed';
 
+    const acceptedQuote = updatedRequest.quotes.find(q => q.status === 'accepted');
+
     requests[reqIndex] = updatedRequest;
     localStorage.setItem(KEYS.REQUESTS, JSON.stringify(requests));
+
+    // Notify Provider
+    if (acceptedQuote) {
+       api.createNotification({
+        userId: acceptedQuote.providerId,
+        type: 'success',
+        title: 'Order Confirmed',
+        message: `Payment confirmed for "${updatedRequest.title}". You can start the service.`,
+        link: 'dashboard'
+      });
+    }
+
     return updatedRequest;
   },
 
@@ -364,6 +415,20 @@ export const api = {
 
     allChats.push(newMessage);
     localStorage.setItem(KEYS.CHATS, JSON.stringify(allChats));
+
+    // Notify Recipient (simplified, ideally we check online status or debounce)
+    const users = JSON.parse(localStorage.getItem(KEYS.USERS) || '[]');
+    const sender = users.find((u: User) => u.id === senderId);
+    const senderName = sender?.name || 'User';
+
+    api.createNotification({
+      userId: recipientId,
+      type: 'info',
+      title: 'New Message',
+      message: `${senderName} sent you a message.`,
+      link: 'dashboard'
+    });
+
     return newMessage;
   },
 
@@ -406,6 +471,35 @@ export const api = {
     });
 
     return conversations.sort((a, b) => b.timestamp - a.timestamp);
+  },
+
+  // Notifications
+  getNotifications: async (userId: string): Promise<Notification[]> => {
+    const all = JSON.parse(localStorage.getItem(KEYS.NOTIFICATIONS) || '[]');
+    return all.filter((n: Notification) => n.userId === userId).sort((a: Notification, b: Notification) => b.timestamp - a.timestamp);
+  },
+
+  createNotification: async (data: Omit<Notification, 'id' | 'timestamp' | 'read'>) => {
+    const all = JSON.parse(localStorage.getItem(KEYS.NOTIFICATIONS) || '[]');
+    const newNotif: Notification = {
+      id: `notif_${Date.now()}_${Math.random()}`,
+      timestamp: Date.now(),
+      read: false,
+      ...data
+    };
+    localStorage.setItem(KEYS.NOTIFICATIONS, JSON.stringify([newNotif, ...all]));
+  },
+
+  markNotificationAsRead: async (notificationId: string) => {
+    const all = JSON.parse(localStorage.getItem(KEYS.NOTIFICATIONS) || '[]');
+    const updated = all.map((n: Notification) => n.id === notificationId ? { ...n, read: true } : n);
+    localStorage.setItem(KEYS.NOTIFICATIONS, JSON.stringify(updated));
+  },
+
+  markAllNotificationsAsRead: async (userId: string) => {
+    const all = JSON.parse(localStorage.getItem(KEYS.NOTIFICATIONS) || '[]');
+    const updated = all.map((n: Notification) => n.userId === userId ? { ...n, read: true } : n);
+    localStorage.setItem(KEYS.NOTIFICATIONS, JSON.stringify(updated));
   }
 };
 

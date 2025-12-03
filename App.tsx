@@ -11,7 +11,9 @@ import ProfileSettings from './components/ProfileSettings';
 import SubmitQuoteModal from './components/SubmitQuoteModal';
 import QuoteDetailsModal from './components/QuoteDetailsModal';
 import AuthPage from './components/AuthPage';
-import { UserRole, ServiceRequest, ProviderProfile as IProviderProfile, Review, Quote, User, Conversation } from './types';
+import Toast from './components/Toast';
+import MessagesPage from './components/MessagesPage';
+import { UserRole, ServiceRequest, ProviderProfile as IProviderProfile, Review, Quote, User, Conversation, Notification } from './types';
 import { api } from './services/api';
 
 const App: React.FC = () => {
@@ -23,6 +25,7 @@ const App: React.FC = () => {
   const [requests, setRequests] = useState<ServiceRequest[]>([]);
   const [providers, setProviders] = useState<IProviderProfile[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   // UI State
@@ -32,6 +35,11 @@ const App: React.FC = () => {
   const [activeChat, setActiveChat] = useState<{name: string, id: string} | null>(null);
   const [quoteToAccept, setQuoteToAccept] = useState<{ requestId: string, quote: Quote } | null>(null);
   const [viewingQuote, setViewingQuote] = useState<Quote | null>(null);
+  
+  // Notification State
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [prevLeadCount, setPrevLeadCount] = useState(0);
+  const [prevNotifCount, setPrevNotifCount] = useState(0);
 
   const pollingInterval = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -48,6 +56,46 @@ const App: React.FC = () => {
       if (currentUser) {
          const chats = await api.getConversations(currentUser.id);
          setConversations(chats);
+         
+         const notifs = await api.getNotifications(currentUser.id);
+         setNotifications(notifs);
+
+         // Show Toast for new Notifications
+         if (notifs.length > prevNotifCount && prevNotifCount > 0) {
+            const newest = notifs[0];
+            if (!newest.read) {
+               setToastMessage(`${newest.title}: ${newest.message}`);
+            }
+         }
+         setPrevNotifCount(notifs.length);
+         
+         // Logic for Provider Notifications: "New Lead Received" (Keep this as well for specific location matches)
+         if (currentUser.role === UserRole.PROVIDER) {
+            const me = fetchedProviders.find(p => p.id === currentUser.id);
+            if (me && me.location) {
+               // Calculate number of open leads matching this provider's location
+               const matchedLeads = fetchedRequests.filter(r => {
+                  const isAvailable = r.status === 'open' && !r.quotes.some(q => q.providerId === me.id);
+                  if (!isAvailable) return false;
+                  
+                  // Strict location matching for notification
+                  if (r.locality) {
+                     const reqLoc = r.locality.toLowerCase().trim();
+                     const provLoc = me.location.toLowerCase().trim();
+                     return provLoc.includes(reqLoc) || reqLoc.includes(provLoc);
+                  }
+                  return false;
+               });
+
+               // If count increased, assume a new lead arrived
+               if (matchedLeads.length > prevLeadCount && prevLeadCount > 0) {
+                  const newLead = matchedLeads[0];
+                  // Only show toast if not already covered by general notifications (which it isn't, leads are passive)
+                  setToastMessage(`New Lead Received: ${newLead.title} in ${newLead.locality}`);
+               }
+               setPrevLeadCount(matchedLeads.length);
+            }
+         }
       }
     } catch (error) {
       console.error("Failed to load data", error);
@@ -86,7 +134,7 @@ const App: React.FC = () => {
       if (pollingInterval.current) clearInterval(pollingInterval.current);
       window.removeEventListener('storage', handleStorageChange);
     };
-  }, [currentUser]);
+  }, [currentUser, prevLeadCount, prevNotifCount]);
 
   const handleLoginSuccess = async () => {
     const user = await api.getCurrentUser();
@@ -99,6 +147,8 @@ const App: React.FC = () => {
     await api.logout();
     setCurrentUser(null);
     setCurrentPage('home');
+    setPrevLeadCount(0);
+    setPrevNotifCount(0);
   };
 
   const handleCreateRequest = async (requestData: any) => {
@@ -186,6 +236,15 @@ const App: React.FC = () => {
        return <AuthPage onSuccess={handleLoginSuccess} />;
     }
 
+    if (currentPage === 'messages' && currentUser) {
+      return (
+        <MessagesPage 
+          conversations={conversations}
+          onOpenChat={(id, name) => setActiveChat({ id, name })}
+        />
+      );
+    }
+
     if (currentPage === 'profile-settings' && currentUser) {
       return (
         <ProfileSettings 
@@ -228,20 +287,23 @@ const App: React.FC = () => {
     if (currentPage === 'dashboard') {
       let visibleRequests = requests;
 
+      // Filter Logic for User vs Provider View
       if (currentUser?.role === UserRole.USER) {
-        // Just verify userId matches. permanentDeleteRequest removed it from storage.
         visibleRequests = requests.filter(r => r.userId === currentUser.id);
       } else if (currentUser?.role === UserRole.PROVIDER) {
-        visibleRequests = requests.filter(r => 
-          !ignoredRequestIds.includes(r.id)
-        );
+        visibleRequests = requests.filter(r => !ignoredRequestIds.includes(r.id));
       }
+
+      const currentProviderProfile = currentUser?.role === UserRole.PROVIDER 
+        ? providers.find(p => p.id === currentUser.id) 
+        : undefined;
 
       return (
         <Dashboard 
           role={currentUser!.role}
           requests={visibleRequests}
           conversations={conversations}
+          currentProvider={currentProviderProfile}
           currentProviderId={currentUser?.id}
           onViewProvider={(id) => {
             setSelectedProviderId(id);
@@ -379,8 +441,17 @@ const App: React.FC = () => {
       setCurrentPage={setCurrentPage} 
       onLogout={handleLogout}
       onLoginClick={() => setCurrentPage('dashboard')}
+      notifications={notifications}
+      onMarkRead={(id) => api.markNotificationAsRead(id).then(fetchData)}
+      onMarkAllRead={() => currentUser && api.markAllNotificationsAsRead(currentUser.id).then(fetchData)}
     >
       {renderContent()}
+
+      <Toast 
+        message={toastMessage || ''} 
+        isVisible={!!toastMessage} 
+        onClose={() => setToastMessage(null)} 
+      />
 
       {showRequestForm && (
         <RequestForm 

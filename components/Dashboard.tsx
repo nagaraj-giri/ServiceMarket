@@ -1,12 +1,13 @@
 
 import React, { useState } from 'react';
-import { UserRole, ServiceRequest, Quote, Conversation } from '../types';
+import { UserRole, ServiceRequest, Quote, Conversation, ProviderProfile } from '../types';
 
 interface DashboardProps {
   role: UserRole;
   requests: ServiceRequest[];
   conversations?: Conversation[];
-  currentProviderId?: string;
+  currentProvider?: ProviderProfile; // Updated to pass full profile for location access
+  currentProviderId?: string; // Kept for backward compat if needed, but currentProvider.id is better
   onViewProvider?: (providerId: string) => void;
   onAcceptQuote?: (requestId: string, quoteId: string) => void;
   onChatWithProvider?: (providerId: string, providerName: string) => void;
@@ -74,8 +75,9 @@ const RequestStatusStepper = ({ status }: { status: ServiceRequest['status'] }) 
   );
 };
 
-const Dashboard: React.FC<DashboardProps> = ({ role, requests, conversations = [], currentProviderId, onViewProvider, onAcceptQuote, onChatWithProvider, onChatWithUser, onSubmitQuote, onIgnoreRequest, onViewQuote, onDeleteRequest }) => {
+const Dashboard: React.FC<DashboardProps> = ({ role, requests, conversations = [], currentProvider, currentProviderId, onViewProvider, onAcceptQuote, onChatWithProvider, onChatWithUser, onSubmitQuote, onIgnoreRequest, onViewQuote, onDeleteRequest }) => {
   const [expandedRequestIds, setExpandedRequestIds] = useState<Set<string>>(new Set());
+  const activeProviderId = currentProvider?.id || currentProviderId;
 
   const toggleExpand = (requestId: string) => {
     const newSet = new Set(expandedRequestIds);
@@ -87,16 +89,39 @@ const Dashboard: React.FC<DashboardProps> = ({ role, requests, conversations = [
     setExpandedRequestIds(newSet);
   };
 
-  if (role === UserRole.PROVIDER) {
+  if (role === UserRole.PROVIDER && activeProviderId) {
     // Separate requests into "New Opportunities" (Leads) and "My Quotes"
-    const newLeads = requests.filter(r => 
-      r.status !== 'closed' && 
-      r.status !== 'accepted' && 
-      !r.quotes.some(q => q.providerId === currentProviderId)
-    );
+    
+    // Filter logic:
+    // 1. Not closed/accepted
+    // 2. Not already quoted by me
+    // 3. LOCATION MATCH: Request locality must be within Provider location (or vice versa)
+    const newLeads = requests.filter(r => {
+      const isAvailable = r.status !== 'closed' && r.status !== 'accepted' && !r.quotes.some(q => q.providerId === activeProviderId);
+      
+      if (!isAvailable) return false;
+
+      // Location Filter
+      if (currentProvider && r.locality && currentProvider.location) {
+        const reqLoc = r.locality.toLowerCase().trim();
+        const provLoc = currentProvider.location.toLowerCase().trim();
+        // Fuzzy match: check if one string contains the other
+        const isMatch = provLoc.includes(reqLoc) || reqLoc.includes(provLoc);
+        return isMatch;
+      }
+      
+      // If request has no locality, or provider has no location, defaulting to show (or hide based on preference).
+      // Prompt says "Only to that providers query to be shared", implying strictness.
+      // If request has a locality but provider doesn't match -> hide.
+      if (r.locality && currentProvider?.location) {
+         return false; 
+      }
+
+      return true;
+    });
 
     const myQuotes = requests.filter(r => 
-      r.quotes.some(q => q.providerId === currentProviderId)
+      r.quotes.some(q => q.providerId === activeProviderId)
     );
 
     // Calculate real-time stats
@@ -104,7 +129,7 @@ const Dashboard: React.FC<DashboardProps> = ({ role, requests, conversations = [
     
     // Calculate revenue: Sum of prices of accepted/closed quotes for this provider
     const revenue = myQuotes.reduce((total, req) => {
-      const myQuote = req.quotes.find(q => q.providerId === currentProviderId);
+      const myQuote = req.quotes.find(q => q.providerId === activeProviderId);
       if (myQuote && (myQuote.status === 'accepted')) {
         return total + myQuote.price;
       }
@@ -121,6 +146,7 @@ const Dashboard: React.FC<DashboardProps> = ({ role, requests, conversations = [
           <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
             <h3 className="text-gray-500 text-sm font-medium">Active Leads</h3>
             <p className="text-3xl font-bold text-dubai-blue mt-2">{activeLeadsCount}</p>
+            {currentProvider?.location && <p className="text-xs text-gray-400 mt-1">In {currentProvider.location}</p>}
           </div>
           <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
             <h3 className="text-gray-500 text-sm font-medium">Submitted Quotes</h3>
@@ -182,7 +208,7 @@ const Dashboard: React.FC<DashboardProps> = ({ role, requests, conversations = [
                   <svg className="w-12 h-12 text-gray-300 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
                   </svg>
-                  No new leads available right now.
+                  No new leads available in your area.
                 </div>
               )}
             </div>
@@ -231,7 +257,7 @@ const Dashboard: React.FC<DashboardProps> = ({ role, requests, conversations = [
               <div className="divide-y divide-gray-100 overflow-y-auto flex-1">
                 {myQuotes.length > 0 ? (
                   myQuotes.map(req => {
-                    const myQuote = req.quotes.find(q => q.providerId === currentProviderId);
+                    const myQuote = req.quotes.find(q => q.providerId === activeProviderId);
                     return (
                       <div key={req.id} className="p-4 hover:bg-gray-50 transition-colors">
                         <div className="flex justify-between items-start mb-1">
@@ -402,7 +428,7 @@ const Dashboard: React.FC<DashboardProps> = ({ role, requests, conversations = [
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                     <div className="flex text-yellow-400">
                                         {[...Array(5)].map((_, i) => (
-                                        <svg key={i} className={`w-4 h-4 ${i < quote.rating ? 'fill-current' : 'text-gray-300'}`} viewBox="0 0 20 20" fill="currentColor"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" /></svg>
+                                        <svg key={i} className={`w-4 h-4 ${i < quote.rating ? 'fill-current' : 'text-gray-300'}`} viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" /></svg>
                                         ))}
                                     </div>
                                     </td>

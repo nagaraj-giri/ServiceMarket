@@ -1,5 +1,8 @@
-import React, { useState, useEffect } from 'react';
+
+import React, { useState, useEffect, useRef } from 'react';
 import { UserRole } from '../types';
+import { DUBAI_LOCALITIES } from '../constants';
+import { getPlaceSuggestions } from '../services/geminiService';
 
 interface ProfileSettingsProps {
   role: UserRole;
@@ -22,6 +25,55 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role, initialData, on
   });
   const [newService, setNewService] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+
+  // Autocomplete state for location
+  const [filteredLocalities, setFilteredLocalities] = useState<string[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
+  const locationWrapperRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (locationWrapperRef.current && !locationWrapperRef.current.contains(event.target as Node)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [locationWrapperRef]);
+
+  // Debounced search for dynamic suggestions
+  useEffect(() => {
+    const fetchSuggestions = async () => {
+      if (formData.location.length >= 3) {
+        setIsLoadingSuggestions(true);
+        // Fallback to static filter first
+        const staticMatches = DUBAI_LOCALITIES.filter(l => l.toLowerCase().includes(formData.location.toLowerCase()));
+        setFilteredLocalities(staticMatches);
+        
+        // Then fetch AI suggestions
+        try {
+          const aiSuggestions = await getPlaceSuggestions(formData.location);
+          if (aiSuggestions.length > 0) {
+            // Merge and deduplicate
+            const combined = Array.from(new Set([...aiSuggestions, ...staticMatches]));
+            setFilteredLocalities(combined.slice(0, 8));
+          }
+        } catch (err) {
+          // Keep static matches
+        } finally {
+          setIsLoadingSuggestions(false);
+        }
+      } else {
+        setFilteredLocalities(DUBAI_LOCALITIES.filter(l => l.toLowerCase().includes(formData.location.toLowerCase())));
+      }
+    };
+
+    const debounceTimer = setTimeout(fetchSuggestions, 600);
+    return () => clearTimeout(debounceTimer);
+  }, [formData.location]);
 
   useEffect(() => {
     if (initialData) {
@@ -153,12 +205,59 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role, initialData, on
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Location</label>
-              <input 
-                type="text" 
-                value={formData.location}
-                onChange={(e) => setFormData({...formData, location: e.target.value})}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-dubai-gold outline-none" 
-              />
+              <div className="relative" ref={locationWrapperRef}>
+                <div className="relative">
+                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                      </svg>
+                   </div>
+                   <input 
+                      type="text" 
+                      value={formData.location}
+                      onChange={(e) => {
+                        setFormData({...formData, location: e.target.value});
+                        setShowSuggestions(true);
+                      }}
+                      onFocus={() => {
+                        setFilteredLocalities(DUBAI_LOCALITIES.filter(l => l.toLowerCase().includes(formData.location.toLowerCase())).slice(0, 8));
+                        setShowSuggestions(true);
+                      }}
+                      className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-dubai-gold focus:border-transparent outline-none" 
+                      placeholder="Search area..."
+                      autoComplete="off"
+                   />
+                   {isLoadingSuggestions && (
+                     <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+                       <svg className="animate-spin h-4 w-4 text-dubai-gold" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                       </svg>
+                     </div>
+                   )}
+                </div>
+                {showSuggestions && filteredLocalities.length > 0 && (
+                  <ul className="absolute z-10 w-full bg-white shadow-xl max-h-60 rounded-md py-1 text-base ring-1 ring-black ring-opacity-5 overflow-auto focus:outline-none sm:text-sm mt-1 border border-gray-100">
+                    {filteredLocalities.map((loc, idx) => (
+                      <li
+                        key={`${loc}-${idx}`}
+                        onClick={() => {
+                          setFormData({...formData, location: loc});
+                          setShowSuggestions(false);
+                        }}
+                        className="cursor-pointer select-none relative py-2.5 pl-3 pr-9 hover:bg-gray-50 text-gray-900 border-b border-gray-50 last:border-0 flex items-center gap-2"
+                      >
+                         <svg className="h-4 w-4 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                         </svg>
+                         <span className="block truncate">{loc}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </div>
             {role === UserRole.PROVIDER && (
               <div className="md:col-span-2">

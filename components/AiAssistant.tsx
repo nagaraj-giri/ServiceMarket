@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useEffect } from 'react';
 import { getDubaiInsights } from '../services/geminiService';
 import { ChatMessage } from '../types';
@@ -159,7 +160,7 @@ const AiAssistant: React.FC = () => {
             <span className="text-2xl">🧞‍♂️</span> Dubai AI Research Assistant
           </h2>
           <p className="text-blue-100 text-sm mt-1">
-            Powered by Google Search Grounding for real-time accuracy on regulations and costs.
+            Powered by Google Search & Maps Grounding for real-time accuracy.
           </p>
         </div>
 
@@ -183,11 +184,16 @@ const AiAssistant: React.FC = () => {
                 {/* Fallback for general sources if no inline sources are detected or if extra metadata exists */}
                 {msg.groundingMetadata?.groundingChunks && !msg.content.includes('[[Source:') && (
                   <div className="mt-2 flex flex-wrap gap-1.5 items-center pt-2 border-t border-dashed border-gray-100">
-                    {msg.groundingMetadata.groundingChunks.map((chunk, idx) => (
-                      chunk.web?.uri && (
+                    {msg.groundingMetadata.groundingChunks.map((chunk, idx) => {
+                      const uri = chunk.web?.uri || chunk.maps?.uri;
+                      const title = chunk.web?.title || chunk.maps?.title || (uri ? new URL(uri).hostname : 'Source');
+                      
+                      if (!uri) return null;
+
+                      return (
                         <a 
                           key={idx}
-                          href={chunk.web.uri}
+                          href={uri}
                           target="_blank"
                           rel="noopener noreferrer"
                           className={`flex items-center gap-1 text-[10px] px-2 py-1 rounded-md transition-colors ${
@@ -196,11 +202,11 @@ const AiAssistant: React.FC = () => {
                              : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
                           }`}
                         >
-                           <span className="truncate max-w-[150px]">{chunk.web.title || new URL(chunk.web.uri).hostname}</span>
+                           <span className="truncate max-w-[150px]">{title}</span>
                            <svg className="w-2.5 h-2.5 opacity-60 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
                         </a>
-                      )
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>

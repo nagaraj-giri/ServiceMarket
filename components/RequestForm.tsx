@@ -1,25 +1,13 @@
+
 import React, { useState, useRef, useEffect } from 'react';
 import { ServiceCategory, ServiceRequest } from '../types';
+import { DUBAI_LOCALITIES } from '../constants';
+import { getPlaceSuggestions } from '../services/geminiService';
 
 interface RequestFormProps {
   onSubmit: (request: Omit<ServiceRequest, 'id' | 'quotes' | 'status' | 'createdAt'>) => void;
   onCancel: () => void;
 }
-
-// Comprehensive list of Dubai areas to simulate Maps Autocomplete
-const DUBAI_LOCALITIES = [
-  "Downtown Dubai", "Business Bay", "Dubai Marina", "Jumeirah Lake Towers (JLT)",
-  "Palm Jumeirah", "Deira", "Bur Dubai", "Al Barsha", "Dubai Silicon Oasis",
-  "Jumeirah Village Circle (JVC)", "Mirdif", "International City", "Dubai Hills Estate",
-  "Arabian Ranches", "Motor City", "Dubai Sports City", "Discovery Gardens",
-  "Jumeirah Beach Residence (JBR)", "Sheikh Zayed Road", "Al Quoz", "Al Nahda",
-  "Al Qusais", "Garhoud", "Dubai Festival City", "Jumeirah 1", "Jumeirah 2", "Jumeirah 3",
-  "Umm Suqeim", "Al Satwa", "Al Karama", "DIFC (Dubai International Financial Centre)", 
-  "City Walk", "Bluewaters Island", "Dubai Creek Harbour", "Meydan City", 
-  "Al Furjan", "Remraam", "Damac Hills", "Town Square", "The Springs",
-  "The Meadows", "Emirates Hills", "Jumeirah Islands", "Dubai Production City (IMPZ)",
-  "Dubai Studio City", "Knowledge Park", "Dubai Internet City", "Dubai Media City"
-];
 
 const RequestForm: React.FC<RequestFormProps> = ({ onSubmit, onCancel }) => {
   const [category, setCategory] = useState<ServiceCategory>(ServiceCategory.VISA);
@@ -31,6 +19,7 @@ const RequestForm: React.FC<RequestFormProps> = ({ onSubmit, onCancel }) => {
   // Autocomplete state
   const [filteredLocalities, setFilteredLocalities] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
   // Handle clicking outside to close suggestions
@@ -46,14 +35,39 @@ const RequestForm: React.FC<RequestFormProps> = ({ onSubmit, onCancel }) => {
     };
   }, [wrapperRef]);
 
+  // Debounced search for dynamic suggestions
+  useEffect(() => {
+    const fetchSuggestions = async () => {
+      if (locality.length >= 3) {
+        setIsLoadingSuggestions(true);
+        // Fallback to static filter first for immediate feedback
+        const staticMatches = DUBAI_LOCALITIES.filter(l => l.toLowerCase().includes(locality.toLowerCase()));
+        setFilteredLocalities(staticMatches);
+        
+        // Then fetch AI suggestions
+        try {
+          const aiSuggestions = await getPlaceSuggestions(locality);
+          if (aiSuggestions.length > 0) {
+            // Merge and deduplicate
+            const combined = Array.from(new Set([...aiSuggestions, ...staticMatches]));
+            setFilteredLocalities(combined.slice(0, 8));
+          }
+        } catch (err) {
+          // Keep static matches if AI fails
+        } finally {
+          setIsLoadingSuggestions(false);
+        }
+      } else {
+        setFilteredLocalities(DUBAI_LOCALITIES.filter(l => l.toLowerCase().includes(locality.toLowerCase())));
+      }
+    };
+
+    const debounceTimer = setTimeout(fetchSuggestions, 600);
+    return () => clearTimeout(debounceTimer);
+  }, [locality]);
+
   const handleLocalityChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const userInput = e.target.value;
-    setLocality(userInput);
-    
-    const filtered = DUBAI_LOCALITIES.filter(
-      (loc) => loc.toLowerCase().includes(userInput.toLowerCase())
-    );
-    setFilteredLocalities(filtered);
+    setLocality(e.target.value);
     setShowSuggestions(true);
   };
 
@@ -135,34 +149,45 @@ const RequestForm: React.FC<RequestFormProps> = ({ onSubmit, onCancel }) => {
                   value={locality}
                   onChange={handleLocalityChange}
                   onFocus={() => {
-                     setFilteredLocalities(DUBAI_LOCALITIES.filter(l => l.toLowerCase().includes(locality.toLowerCase())));
+                     // Initial suggestions from static list
+                     setFilteredLocalities(DUBAI_LOCALITIES.filter(l => l.toLowerCase().includes(locality.toLowerCase())).slice(0, 8));
                      setShowSuggestions(true);
                   }}
                   placeholder="Search area (e.g. Business Bay)"
                   className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-dubai-gold focus:border-transparent outline-none bg-white text-gray-700 placeholder-gray-400"
                   autoComplete="off"
                 />
+                {isLoadingSuggestions && (
+                  <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+                    <svg className="animate-spin h-4 w-4 text-dubai-gold" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                  </div>
+                )}
               </div>
               
               {showSuggestions && filteredLocalities.length > 0 && (
                 <ul className="absolute z-10 w-full bg-white shadow-xl max-h-60 rounded-md py-1 text-base ring-1 ring-black ring-opacity-5 overflow-auto focus:outline-none sm:text-sm mt-1 border border-gray-100">
-                  {filteredLocalities.map((loc) => (
+                  {filteredLocalities.map((loc, idx) => (
                     <li
-                      key={loc}
+                      key={`${loc}-${idx}`}
                       onClick={() => handleSuggestionClick(loc)}
                       className="cursor-pointer select-none relative py-2.5 pl-3 pr-9 hover:bg-gray-50 text-gray-900 border-b border-gray-50 last:border-0 flex items-center gap-2"
                     >
-                      <svg className="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <svg className="h-4 w-4 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
                       </svg>
                       <span className="block truncate">{loc}</span>
                     </li>
                   ))}
+                  <li className="py-2 px-3 text-xs text-center text-gray-400 bg-gray-50/50">
+                    Suggestions powered by Google Maps
+                  </li>
                 </ul>
               )}
             </div>
-            <p className="text-xs text-gray-400 mt-1">Start typing to see suggestions from our database.</p>
           </div>
 
           <div>

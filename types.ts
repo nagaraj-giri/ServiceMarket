@@ -95,3 +95,14 @@ export interface ProviderProfile {
   location: string;
   reviews: Review[];
 }
+
+export interface Notification {
+  id: string;
+  userId: string;
+  type: 'info' | 'success' | 'warning';
+  title: string;
+  message: string;
+  timestamp: number;
+  read: boolean;
+  link?: string; // e.g. "dashboard"
+}
