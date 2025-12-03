@@ -1,0 +1,71 @@
+
+export enum UserRole {
+  USER = 'USER',
+  PROVIDER = 'PROVIDER',
+  ADMIN = 'ADMIN'
+}
+
+export enum ServiceCategory {
+  VISA = 'Visa Services',
+  BUSINESS = 'Business Setup',
+  TRAVEL = 'Travel Packages'
+}
+
+export interface Quote {
+  id: string;
+  providerId: string;
+  providerName: string;
+  price: number;
+  currency: string;
+  timeline: string;
+  description: string;
+  rating: number;
+  verified: boolean;
+  status: 'pending' | 'accepted' | 'rejected';
+}
+
+export interface ServiceRequest {
+  id: string;
+  userId: string;
+  category: ServiceCategory;
+  title: string;
+  description: string;
+  locality?: string;
+  status: 'open' | 'quoted' | 'accepted' | 'closed';
+  createdAt: string;
+  quotes: Quote[];
+}
+
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'model';
+  content: string;
+  timestamp: number;
+  groundingMetadata?: {
+    groundingChunks: Array<{
+      web?: { uri: string; title: string };
+    }>;
+  };
+}
+
+export interface Review {
+  id: string;
+  author: string;
+  rating: number;
+  content: string;
+  date: string;
+}
+
+export interface ProviderProfile {
+  id: string;
+  name: string;
+  tagline: string;
+  rating: number;
+  reviewCount: number;
+  badges: string[];
+  description: string;
+  services: string[];
+  isVerified: boolean;
+  location: string;
+  reviews: Review[];
+}
