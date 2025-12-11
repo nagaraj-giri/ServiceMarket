@@ -1,24 +1,28 @@
-// firebase.ts – modular v9+
-
-import { initializeApp, getApps, getApp } from "firebase/app";
-import { getAuth } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
-import { getStorage } from "firebase/storage";
-
-const firebaseConfig = {
-  apiKey: "AIzaSyBWjFgzcioU6WN3xHsee82Ud-YyuPE93As",
-  authDomain: "servicemarket-22498701-b4b44.firebaseapp.com",
-  projectId: "servicemarket-22498701-b4b44",
-  storageBucket: "servicemarket-22498701-b4b44.firebasestorage.app",
-  messagingSenderId: "225876463298",
-  appId: "1:225876463298:web:2d2e3ebd18332e5077355b"
-};
-
-// Re-use app if already initialized (for Next.js / React strict mode)
-const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
-
-const auth = getAuth(app);
-const db = getFirestore(app);
-const storage = getStorage(app);
-
-export { app, auth, db, storage };
+{
+  "name": "dubailink-service-market",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "deploy": "firebase deploy"
+  },
+  "dependencies": {
+    "@google/genai": "^0.1.1",
+    "firebase": "^10.12.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^2.12.7",
+    "lucide-react": "^0.378.0"
+  },
+  "devDependencies": {
+    "firebase-tools": "^13.10.0",
+    "typescript": "^5.2.2",
+    "vite": "^5.2.0",
+    "tailwindcss": "^3.4.3",
+    "autoprefixer": "^10.4.19",
+    "postcss": "^8.4.38"
+  }
+}

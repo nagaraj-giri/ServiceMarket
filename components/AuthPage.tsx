@@ -19,41 +19,55 @@ const AuthPage: React.FC<AuthPageProps> = ({ onSuccess, showToast }) => {
   
   const [error, setError] = useState('');
   const [isDomainError, setIsDomainError] = useState(false);
+  const [errorType, setErrorType] = useState<'domain' | 'app-check' | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
   // Helper to parse Firebase errors into user-friendly messages
   const getErrorMessage = (err: any) => {
     console.error("Auth Error Details:", err);
     
+    const errorCode = err.code;
+    const errorMessage = err.message || '';
+
     // Auth Domain Error (Check code or message string)
-    if (err.code === 'auth/unauthorized-domain' || (err.message && err.message.includes('auth/unauthorized-domain'))) {
+    if (errorCode === 'auth/unauthorized-domain' || errorMessage.includes('auth/unauthorized-domain')) {
       setIsDomainError(true);
+      setErrorType('domain');
       return `Domain unauthorized. This app is running on "${window.location.hostname}" which is not whitelisted in Firebase Console.`;
     }
     
     // App Check / API Key Restrictions
-    if (err.code === 'auth/firebase-app-check-token-is-invalid.' || err.message?.includes('firebase-app-check-token-is-invalid')) {
-      return "Authentication blocked by security settings (App Check).";
+    // Check various formats of the error code (with/without trailing dot)
+    if (
+      errorCode === 'auth/firebase-app-check-token-is-invalid' || 
+      errorCode === 'auth/firebase-app-check-token-is-invalid.' || 
+      errorMessage.includes('firebase-app-check-token-is-invalid')
+    ) {
+      setIsDomainError(true);
+      setErrorType('app-check');
+      return "Authentication blocked by Firebase App Check.";
     }
 
     setIsDomainError(false);
+    setErrorType(null);
 
     // Common Auth Errors
-    if (err.code === 'auth/email-already-in-use') return "Email already in use. Please sign in instead.";
-    if (err.code === 'auth/wrong-password') return "Incorrect password.";
-    if (err.code === 'auth/user-not-found') return "No account found with this email.";
-    if (err.code === 'auth/weak-password') return "Password should be at least 6 characters.";
-    if (err.code === 'auth/invalid-email') return "Please enter a valid email address.";
-    if (err.code === 'auth/popup-closed-by-user') return "Sign-in popup was closed.";
-    if (err.code === 'auth/popup-blocked') return "Sign-in popup blocked. Please allow popups for this site.";
+    if (errorCode === 'auth/email-already-in-use') return "Email already in use. Please sign in instead.";
+    if (errorCode === 'auth/wrong-password') return "Incorrect password.";
+    if (errorCode === 'auth/user-not-found') return "No account found with this email.";
+    if (errorCode === 'auth/weak-password') return "Password should be at least 6 characters.";
+    if (errorCode === 'auth/invalid-email') return "Please enter a valid email address.";
+    if (errorCode === 'auth/popup-closed-by-user') return "Sign-in popup was closed.";
+    if (errorCode === 'auth/popup-blocked') return "Sign-in popup blocked. Please allow popups for this site.";
 
-    return err.message || "Authentication failed. Please try again.";
+    return errorMessage || "Authentication failed. Please try again.";
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setIsDomainError(false);
+    setErrorType(null);
     setIsLoading(true);
 
     try {
@@ -81,6 +95,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ onSuccess, showToast }) => {
   const handleGoogleLogin = async () => {
     setError('');
     setIsDomainError(false);
+    setErrorType(null);
     setIsLoading(true);
     try {
       await api.loginWithGoogle();
@@ -89,8 +104,8 @@ const AuthPage: React.FC<AuthPageProps> = ({ onSuccess, showToast }) => {
     } catch (err: any) {
       const msg = getErrorMessage(err);
       setError(msg);
-      // Don't show toast for domain error, the UI is better
-      if (err.code !== 'auth/unauthorized-domain' && showToast) showToast(msg, 'error');
+      // Don't show toast for domain/config errors, the UI is better
+      if (!isDomainError && showToast) showToast(msg, 'error');
     } finally {
       setIsLoading(false);
     }
@@ -114,6 +129,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ onSuccess, showToast }) => {
     setError('');
     setPassword('');
     setIsDomainError(false);
+    setErrorType(null);
   };
 
   return (
@@ -205,25 +221,39 @@ const AuthPage: React.FC<AuthPageProps> = ({ onSuccess, showToast }) => {
                     
                     {isDomainError && (
                       <div className="mt-3 pt-3 border-t border-red-100">
-                        <div className="bg-white p-3 rounded border border-red-100 text-xs">
-                          <p className="font-bold text-gray-800 mb-2">How to fix Authorized Domain:</p>
-                          <ol className="list-decimal pl-4 space-y-1 text-gray-600 mb-2">
-                            <li>Go to <a href="https://console.firebase.google.com/" target="_blank" rel="noreferrer" className="text-blue-600 underline">Firebase Console</a></li>
-                            <li>Select project: <strong>servicemarket-22498701...</strong></li>
-                            <li>Navigate to <strong>Authentication</strong> &gt; <strong>Settings</strong> &gt; <strong>Authorized Domains</strong></li>
-                            <li>Click <strong>Add Domain</strong> and paste this URL:</li>
-                          </ol>
-                          <div className="flex items-center gap-2 bg-gray-50 p-2 rounded border border-gray-200">
-                            <code className="flex-1 font-mono text-gray-700 overflow-x-auto whitespace-nowrap">{window.location.hostname}</code>
-                            <button 
-                              type="button"
-                              onClick={() => navigator.clipboard.writeText(window.location.hostname)} 
-                              className="text-dubai-gold hover:text-yellow-600 font-bold px-2 py-1"
-                            >
-                              Copy
-                            </button>
+                        {errorType === 'domain' && (
+                          <div className="bg-white p-3 rounded border border-red-100 text-xs">
+                            <p className="font-bold text-gray-800 mb-2">How to fix Authorized Domain:</p>
+                            <ol className="list-decimal pl-4 space-y-1 text-gray-600 mb-2">
+                              <li>Go to <a href="https://console.firebase.google.com/" target="_blank" rel="noreferrer" className="text-blue-600 underline">Firebase Console</a></li>
+                              <li>Select project: <strong>servicemarket-22498701...</strong></li>
+                              <li>Navigate to <strong>Authentication</strong> &gt; <strong>Settings</strong> &gt; <strong>Authorized Domains</strong></li>
+                              <li>Click <strong>Add Domain</strong> and paste this URL:</li>
+                            </ol>
+                            <div className="flex items-center gap-2 bg-gray-50 p-2 rounded border border-gray-200">
+                              <code className="flex-1 font-mono text-gray-700 overflow-x-auto whitespace-nowrap">{window.location.hostname}</code>
+                              <button 
+                                type="button"
+                                onClick={() => navigator.clipboard.writeText(window.location.hostname)} 
+                                className="text-dubai-gold hover:text-yellow-600 font-bold px-2 py-1"
+                              >
+                                Copy
+                              </button>
+                            </div>
                           </div>
-                        </div>
+                        )}
+
+                        {errorType === 'app-check' && (
+                           <div className="bg-white p-3 rounded border border-red-100 text-xs text-gray-600">
+                             <p className="font-bold text-red-800 mb-1">Access Blocked by App Check</p>
+                             <p>This app has App Check enabled, which rejects requests from unverified environments (like localhost or this preview).</p>
+                             <p className="mt-2">To fix this in development:</p>
+                             <ul className="list-disc pl-4 mt-1 space-y-1">
+                               <li>Register a <strong>Debug Token</strong> in Firebase Console.</li>
+                               <li>Or disable App Check enforcement temporarily.</li>
+                             </ul>
+                           </div>
+                        )}
                         
                         <div className="mt-4">
                           <p className="text-xs text-center text-gray-500 mb-2">- OR -</p>
