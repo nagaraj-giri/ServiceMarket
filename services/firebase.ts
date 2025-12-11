@@ -1,5 +1,3 @@
-// firebase.ts – modular v9+
-
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
@@ -11,14 +9,12 @@ const firebaseConfig = {
   projectId: "servicemarket-22498701-b4b44",
   storageBucket: "servicemarket-22498701-b4b44.firebasestorage.app",
   messagingSenderId: "225876463298",
-  appId: "1:225876463298:web:2d2e3ebd18332e5077355b"
+  appId: "1:225876463298:web:2d2e3ebd18332e5077355b",
 };
 
-// Re-use app if already initialized (for Next.js / React strict mode)
-const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
+// Initialize Firebase (Singleton pattern)
+const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
-const auth = getAuth(app);
-const db = getFirestore(app);
-const storage = getStorage(app);
-
-export { app, auth, db, storage };
+export const auth = getAuth(app);
+export const db = getFirestore(app);
+export const storage = getStorage(app);

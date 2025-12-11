@@ -1,8 +1,10 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { UserRole } from '../types';
+import { UserRole, ServiceType } from '../types';
 import { DUBAI_LOCALITIES } from '../constants';
 import { getPlaceSuggestions } from '../services/geminiService';
+import { api } from '../services/api';
+import FileUploader from './FileUploader';
 
 interface ProfileSettingsProps {
   role: UserRole;
@@ -22,17 +24,26 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role, initialData, on
     tagline: '',
     description: '',
     services: [] as string[],
+    serviceTypes: [] as string[],
+    imageUrl: '', // New field for image URL
   });
   const [newService, setNewService] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [availableServiceTypes, setAvailableServiceTypes] = useState<ServiceType[]>([]);
 
   // Autocomplete state for location
   const [filteredLocalities, setFilteredLocalities] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
   const locationWrapperRef = useRef<HTMLDivElement>(null);
+  
+  // Ref to track previous initialData to prevent unnecessary resets during polling
+  const prevDataRef = useRef<string>('');
 
   useEffect(() => {
+    // Fetch available service types
+    api.getServiceTypes().then(setAvailableServiceTypes);
+
     const handleClickOutside = (event: MouseEvent) => {
       if (locationWrapperRef.current && !locationWrapperRef.current.contains(event.target as Node)) {
         setShowSuggestions(false);
@@ -76,10 +87,20 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role, initialData, on
   }, [formData.location]);
 
   useEffect(() => {
+    // Deep compare initialData to prevent overwriting user edits on poll
+    const currentDataStr = JSON.stringify(initialData);
+    if (currentDataStr === prevDataRef.current) return;
+    
     if (initialData) {
-      setFormData(prev => ({ ...prev, ...initialData }));
-    } else if (role === UserRole.PROVIDER) {
-      // Default mock for provider if no initial data
+      prevDataRef.current = currentDataStr;
+      setFormData(prev => ({
+          ...prev, 
+          ...initialData,
+          serviceTypes: initialData.serviceTypes || [],
+          services: initialData.services || []
+      }));
+    } else if (role === UserRole.PROVIDER && !prevDataRef.current) {
+      // Default mock for provider if no initial data AND not previously loaded
       setFormData(prev => ({
         ...prev,
         name: 'Elite Visa Services',
@@ -88,6 +109,7 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role, initialData, on
         tagline: 'Premium PRO Services & Visa Assistance',
         description: 'We specialize in handling complex visa requirements for investors, entrepreneurs, and families.',
         services: ['Golden Visa', 'Family Sponsorship', 'Investor Visa'],
+        serviceTypes: ['Visa Services'],
       }));
     }
   }, [role, initialData]);
@@ -101,7 +123,7 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role, initialData, on
     }, 1000);
   };
 
-  const handleAddService = () => {
+  const handleAddTag = () => {
     if (!newService.trim()) return;
     setFormData(prev => ({
       ...prev,
@@ -110,11 +132,15 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role, initialData, on
     setNewService('');
   };
 
-  const handleRemoveService = (indexToRemove: number) => {
+  const handleRemoveTag = (indexToRemove: number) => {
     setFormData(prev => ({
       ...prev,
       services: prev.services.filter((_, idx) => idx !== indexToRemove)
     }));
+  };
+
+  const handleImageUpload = (url: string) => {
+    setFormData(prev => ({ ...prev, imageUrl: url }));
   };
 
   return (
@@ -145,20 +171,14 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role, initialData, on
         </div>
 
         <form onSubmit={handleSave} className="p-8 space-y-6">
-          <div className="flex items-center gap-6 mb-8">
-            <div className="w-24 h-24 bg-gray-200 rounded-full flex items-center justify-center text-3xl font-bold text-gray-500 relative group cursor-pointer overflow-hidden ring-4 ring-gray-50">
-              {formData.name.charAt(0)}
-              <div className="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
-                </svg>
-              </div>
-            </div>
-            <div>
-              <h3 className="text-lg font-bold text-gray-900">{role === UserRole.PROVIDER ? 'Company Logo' : 'Profile Photo'}</h3>
-              <p className="text-sm text-gray-500">Click to upload a new image. JPG or PNG.</p>
-            </div>
+          {/* Image Uploader */}
+          <div className="mb-8 border-b border-gray-100 pb-8">
+            <FileUploader 
+              label={role === UserRole.PROVIDER ? 'Company Logo' : 'Profile Photo'}
+              currentImageUrl={formData.imageUrl}
+              onUploadComplete={handleImageUpload}
+              isCircular={role === UserRole.USER}
+            />
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -259,41 +279,69 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role, initialData, on
                 )}
               </div>
             </div>
+
             {role === UserRole.PROVIDER && (
-              <div className="md:col-span-2">
-                <label className="block text-sm font-medium text-gray-700 mb-1">Services Offered</label>
-                <div className="flex gap-2 mb-3">
-                  <input 
-                    type="text" 
-                    value={newService}
-                    onChange={(e) => setNewService(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddService())}
-                    placeholder="Add a service (e.g. Family Visa)"
-                    className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-dubai-gold outline-none" 
-                  />
-                  <button 
-                    type="button" 
-                    onClick={handleAddService}
-                    className="px-4 py-2 bg-dubai-gold text-white rounded-lg hover:bg-yellow-600 font-medium"
-                  >
-                    Add
-                  </button>
-                </div>
-                <div className="flex flex-wrap gap-2 min-h-[40px] p-2 bg-gray-50 rounded-lg border border-gray-100">
-                    {formData.services?.length > 0 ? (
-                        formData.services.map((service, idx) => (
-                            <span key={idx} className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-white border border-gray-200 text-gray-700 shadow-sm animate-in zoom-in-50 duration-200">
-                                {service}
-                                <button type="button" onClick={() => handleRemoveService(idx)} className="ml-2 text-gray-400 hover:text-red-500 rounded-full p-0.5 hover:bg-red-50 transition-colors">
-                                    <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" /></svg>
-                                </button>
-                            </span>
-                        ))
-                    ) : (
-                        <span className="text-gray-400 text-sm italic p-1">No services listed yet. Add services to appear in search results.</span>
-                    )}
-                </div>
-              </div>
+              <>
+                 <div className="md:col-span-2">
+                   <label className="block text-sm font-medium text-gray-700 mb-2">Service Categories</label>
+                   {role === UserRole.PROVIDER ? (
+                      <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
+                        <div className="flex flex-wrap gap-2">
+                           {formData.serviceTypes.length > 0 ? (
+                             formData.serviceTypes.map((type, idx) => (
+                               <span key={idx} className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-white border border-gray-200 text-gray-700 shadow-sm">
+                                 {type}
+                               </span>
+                             ))
+                           ) : (
+                             <span className="text-sm text-gray-400 italic">No service categories assigned yet.</span>
+                           )}
+                        </div>
+                        <p className="text-xs text-gray-500 mt-3 flex items-center gap-1">
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                          Assigned by Administrator
+                        </p>
+                      </div>
+                   ) : (
+                      <div className="relative"></div>
+                   )}
+                 </div>
+
+                 <div className="md:col-span-2">
+                   <label className="block text-sm font-medium text-gray-700 mb-1">Tags</label>
+                   <div className="flex gap-2 mb-3">
+                     <input 
+                       type="text" 
+                       value={newService}
+                       onChange={(e) => setNewService(e.target.value)}
+                       onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddTag())}
+                       placeholder="Add a tag (e.g. Family Visa)"
+                       className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-dubai-gold outline-none" 
+                     />
+                     <button 
+                       type="button" 
+                       onClick={handleAddTag}
+                       className="px-4 py-2 bg-dubai-gold text-white rounded-lg hover:bg-yellow-600 font-medium"
+                     >
+                       Add
+                     </button>
+                   </div>
+                   <div className="flex flex-wrap gap-2 min-h-[40px] p-2 bg-gray-50 rounded-lg border border-gray-100">
+                       {formData.services?.length > 0 ? (
+                           formData.services.map((service, idx) => (
+                               <span key={idx} className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-white border border-gray-200 text-gray-700 shadow-sm animate-in zoom-in-50 duration-200">
+                                   {service}
+                                   <button type="button" onClick={() => handleRemoveTag(idx)} className="ml-2 text-gray-400 hover:text-red-500 rounded-full p-0.5 hover:bg-red-50 transition-colors">
+                                       <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" /></svg>
+                                   </button>
+                               </span>
+                           ))
+                       ) : (
+                           <span className="text-gray-400 text-sm italic p-1">No tags listed yet. Add tags to appear in search results.</span>
+                       )}
+                   </div>
+                 </div>
+              </>
             )}
             
             {role === UserRole.PROVIDER && (

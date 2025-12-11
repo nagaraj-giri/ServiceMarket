@@ -11,9 +11,11 @@ import ProfileSettings from './components/ProfileSettings';
 import SubmitQuoteModal from './components/SubmitQuoteModal';
 import QuoteDetailsModal from './components/QuoteDetailsModal';
 import AuthPage from './components/AuthPage';
-import Toast from './components/Toast';
+import Toast, { ToastType } from './components/Toast';
 import MessagesPage from './components/MessagesPage';
-import { UserRole, ServiceRequest, ProviderProfile as IProviderProfile, Quote, User, Conversation, Notification, ServiceCategory } from './types';
+import AdminDashboard from './components/AdminDashboard'; 
+import ProviderLeadsPage from './components/ProviderLeadsPage';
+import { UserRole, ServiceRequest, ProviderProfile as IProviderProfile, Quote, User, Conversation, Notification, ServiceCategory, SiteSettings, AdminSection } from './types';
 import { api } from './services/api';
 
 const App: React.FC = () => {
@@ -22,11 +24,17 @@ const App: React.FC = () => {
   const [showRequestForm, setShowRequestForm] = useState(false);
   const [requestCategory, setRequestCategory] = useState<ServiceCategory | undefined>(undefined);
   
+  // Admin State
+  const [adminSection, setAdminSection] = useState<AdminSection>('overview');
+
   // Data State
   const [requests, setRequests] = useState<ServiceRequest[]>([]);
+  const [providerLeads, setProviderLeads] = useState<ServiceRequest[]>([]); // New State for Provider Leads
   const [providers, setProviders] = useState<IProviderProfile[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [allUsers, setAllUsers] = useState<User[]>([]);
+  const [siteSettings, setSiteSettings] = useState<SiteSettings>();
   const [isLoading, setIsLoading] = useState(true);
 
   // UI State
@@ -39,59 +47,78 @@ const App: React.FC = () => {
   const [isAiOpen, setIsAiOpen] = useState(false);
   
   // Notification State
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toastConfig, setToastConfig] = useState<{ message: string, type: ToastType } | null>(null);
   const [prevLeadCount, setPrevLeadCount] = useState(0);
   const [prevNotifCount, setPrevNotifCount] = useState(0);
 
   const pollingInterval = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Fetch data
-  const fetchData = async () => {
+  // Helper to show toasts
+  const showToast = (message: string, type: ToastType = 'info') => {
+    setToastConfig({ message, type });
+  };
+
+  // Fetch data - Separated logic for authenticated vs public data
+  const fetchData = async (userOverride?: User | null) => {
     try {
-      const [fetchedRequests, fetchedProviders] = await Promise.all([
-        api.getRequests(),
-        api.getProviders()
+      // 1. Always fetch public data (Providers, Settings)
+      // Use Promise.allSettled to handle potential permission failures gracefully
+      const results = await Promise.allSettled([
+        api.getProviders(),
+        api.getSettings()
       ]);
-      setRequests(fetchedRequests);
-      setProviders(fetchedProviders);
+
+      if (results[0].status === 'fulfilled') {
+        setProviders(results[0].value);
+      }
+      if (results[1].status === 'fulfilled') {
+        setSiteSettings(results[1].value);
+      }
       
-      if (currentUser) {
-         const chats = await api.getConversations(currentUser.id);
-         setConversations(chats);
-         
-         const notifs = await api.getNotifications(currentUser.id);
-         setNotifications(notifs);
+      const user = userOverride === undefined ? currentUser : userOverride;
 
-         if (notifs.length > prevNotifCount && prevNotifCount > 0) {
-            const newest = notifs[0];
-            if (!newest.read) {
-               setToastMessage(`${newest.title}: ${newest.message}`);
-            }
-         }
-         setPrevNotifCount(notifs.length);
-         
-         if (currentUser.role === UserRole.PROVIDER) {
-            const me = fetchedProviders.find(p => p.id === currentUser.id);
-            if (me && me.location) {
-               const matchedLeads = fetchedRequests.filter(r => {
-                  const isAvailable = r.status === 'open' && !r.quotes.some(q => q.providerId === me.id);
-                  if (!isAvailable) return false;
-                  
-                  if (r.locality) {
-                     const reqLoc = r.locality.toLowerCase().trim();
-                     const provLoc = me.location.toLowerCase().trim();
-                     return provLoc.includes(reqLoc) || reqLoc.includes(provLoc);
-                  }
-                  return false;
-               });
+      if (user) {
+         // 2. Fetch Protected Data (Only if logged in)
+         const fetchedRequests = await api.getRequests(user);
+         setRequests(fetchedRequests);
 
-               if (matchedLeads.length > prevLeadCount && prevLeadCount > 0) {
-                  const newLead = matchedLeads[0];
-                  setToastMessage(`New Lead Received: ${newLead.title} in ${newLead.locality}`);
-               }
-               setPrevLeadCount(matchedLeads.length);
-            }
+         // Role specific fetches
+         if (user.role === UserRole.ADMIN) {
+            const users = await api.getAllUsers();
+            setAllUsers(users);
+         } else {
+             const chats = await api.getConversations(user.id);
+             setConversations(chats);
+             
+             const notifs = await api.getNotifications(user.id);
+             setNotifications(notifs);
+
+             if (notifs.length > prevNotifCount && prevNotifCount > 0) {
+                const newest = notifs[0];
+                if (!newest.read) {
+                   showToast(`${newest.title}: ${newest.message}`, 'info');
+                }
+             }
+             setPrevNotifCount(notifs.length);
          }
+         
+         // Provider specific logic
+         if (user.role === UserRole.PROVIDER) {
+            const myLeads = await api.getProviderLeads(user.id);
+            setProviderLeads(myLeads);
+
+            if (myLeads.length > prevLeadCount && prevLeadCount > 0) {
+               const newLead = myLeads[myLeads.length - 1]; 
+               if(newLead) showToast(`New Lead: ${newLead.title}`, 'info');
+            }
+            setPrevLeadCount(myLeads.length);
+         }
+      } else {
+         // If guest, ensure sensitive data is cleared
+         setRequests([]);
+         setConversations([]);
+         setNotifications([]);
+         setProviderLeads([]);
       }
     } catch (error) {
       console.error("Failed to load data", error);
@@ -103,7 +130,8 @@ const App: React.FC = () => {
       try {
         const user = await api.getCurrentUser();
         setCurrentUser(user);
-        await fetchData();
+        // Pass user directly to avoid stale state in first fetch
+        await fetchData(user);
       } catch (err) {
         console.error("Init error", err);
       } finally {
@@ -114,12 +142,16 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    // Only poll if a user is logged in
     if (currentUser) {
-      pollingInterval.current = setInterval(fetchData, 3000);
+      pollingInterval.current = setInterval(() => fetchData(currentUser), 3000);
+    } else {
+       if (pollingInterval.current) clearInterval(pollingInterval.current);
     }
+
     const handleStorageChange = (e: StorageEvent) => {
        if (e.key && e.key.startsWith('dubailink_')) {
-          fetchData();
+          fetchData(currentUser);
        }
     };
     window.addEventListener('storage', handleStorageChange);
@@ -131,10 +163,15 @@ const App: React.FC = () => {
   }, [currentUser, prevLeadCount, prevNotifCount]);
 
   const handleLoginSuccess = async () => {
-    const user = await api.getCurrentUser();
-    setCurrentUser(user);
-    setCurrentPage('dashboard');
-    fetchData();
+    try {
+      const user = await api.getCurrentUser();
+      setCurrentUser(user);
+      setCurrentPage('dashboard');
+      await fetchData(user); // Immediate fetch with new user
+      showToast(`Welcome back, ${user?.name}!`, 'success');
+    } catch (e) {
+       showToast('Failed to load user profile.', 'error');
+    }
   };
 
   const handleLogout = async () => {
@@ -143,11 +180,14 @@ const App: React.FC = () => {
     setCurrentPage('home');
     setPrevLeadCount(0);
     setPrevNotifCount(0);
+    setRequests([]); // Clear data on logout
+    showToast('Signed out successfully.', 'success');
   };
 
   const openRequestForm = (category?: ServiceCategory) => {
       if (!currentUser) {
           setCurrentPage('dashboard'); // Redirect to auth if not logged in
+          showToast('Please sign in to post a request.', 'info');
       } else {
           setRequestCategory(category);
           setShowRequestForm(true);
@@ -161,19 +201,34 @@ const App: React.FC = () => {
         userId: currentUser?.id
       });
       setShowRequestForm(false);
-      fetchData();
+      fetchData(currentUser);
       setCurrentPage('dashboard');
-    } catch (error) {
+      showToast('Service request created successfully!', 'success');
+    } catch (error: any) {
       console.error("Failed to create request", error);
+      showToast(error.message || "Failed to create request.", 'error');
     }
   };
 
   const handleDeleteRequest = async (requestId: string) => {
     try {
        await api.permanentDeleteRequest(requestId);
-       await fetchData(); 
-    } catch (error) {
+       await fetchData(currentUser); 
+       showToast('Request deleted successfully.', 'success');
+    } catch (error: any) {
        console.error("Failed to delete request", error);
+       showToast(error.message || "Failed to delete request.", 'error');
+    }
+  };
+
+  const handleToggleVerifyProvider = async (providerId: string) => {
+    try {
+      await api.toggleProviderVerification(providerId);
+      await fetchData(currentUser);
+      showToast('Provider status updated.', 'success');
+    } catch (error: any) {
+      console.error("Failed to toggle provider verification", error);
+      showToast(error.message, 'error');
     }
   };
 
@@ -184,10 +239,12 @@ const App: React.FC = () => {
       if (myProfile) {
         await api.submitQuote(quoteRequest, myProfile, quoteData);
         setQuoteRequest(null);
-        fetchData();
+        fetchData(currentUser);
+        showToast('Quote submitted successfully!', 'success');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to submit quote", error);
+      showToast(error.message || "Failed to submit quote.", 'error');
     }
   };
 
@@ -195,9 +252,11 @@ const App: React.FC = () => {
     if (!quoteToAccept) return;
     try {
       await api.acceptQuote(quoteToAccept.requestId, quoteToAccept.quote.id);
-      fetchData();
-    } catch (error) {
+      fetchData(currentUser);
+      // Toast handled in payment complete usually, but here is intermediate step
+    } catch (error: any) {
       console.error("Failed to accept quote", error);
+      showToast("Failed to process acceptance.", 'error');
     }
   };
 
@@ -206,24 +265,36 @@ const App: React.FC = () => {
     try {
        await api.completeOrder(quoteToAccept.requestId);
        setQuoteToAccept(null);
-       fetchData();
-    } catch (error) {
+       fetchData(currentUser);
+       showToast(`Order confirmed via ${method} payment!`, 'success');
+    } catch (error: any) {
        console.error("Failed to complete order", error);
+       showToast("Payment processing failed.", 'error');
     }
   };
 
   const handleProfileUpdate = async (data: any) => {
-    if (currentUser?.role === UserRole.PROVIDER) {
-      await api.updateProvider(currentUser.id, {
-        name: data.name,
-        tagline: data.tagline,
-        description: data.description,
-        services: data.services,
-        location: data.location
-      });
+    try {
+      if (currentUser?.role === UserRole.PROVIDER) {
+        await api.updateProvider(currentUser.id, {
+          name: data.name,
+          tagline: data.tagline,
+          description: data.description,
+          services: data.services,
+          serviceTypes: data.serviceTypes, 
+          location: data.location
+        });
+      }
+      // Also update base user data
+      await api.updateUser({ ...currentUser!, name: data.name, email: data.email });
+
+      setCurrentPage('dashboard');
+      fetchData(currentUser);
+      showToast('Profile settings saved successfully.', 'success');
+    } catch (error: any) {
+       console.error("Profile update failed", error);
+       showToast("Failed to save profile changes.", 'error');
     }
-    setCurrentPage('dashboard');
-    fetchData();
   };
 
   const renderContent = () => {
@@ -236,7 +307,7 @@ const App: React.FC = () => {
     }
 
     if (!currentUser && currentPage === 'dashboard') {
-       return <AuthPage onSuccess={handleLoginSuccess} />;
+       return <AuthPage onSuccess={handleLoginSuccess} showToast={showToast} />;
     }
 
     if (currentPage === 'messages' && currentUser) {
@@ -252,7 +323,7 @@ const App: React.FC = () => {
       return (
         <ProfileSettings 
           role={currentUser.role}
-          initialData={currentUser.role === UserRole.PROVIDER ? providers.find(p => p.id === currentUser.id) : { name: currentUser.name, email: currentUser.email }}
+          initialData={currentUser.role === UserRole.PROVIDER ? providers.find(p => p.id === currentUser.id) : { name: currentUser.name, email: currentUser.email, phone: '', location: '' }}
           onSave={handleProfileUpdate}
           onCancel={() => setCurrentPage('dashboard')}
           onPreview={() => {
@@ -263,6 +334,27 @@ const App: React.FC = () => {
       );
     }
     
+    // NEW: Provider Leads Page
+    if (currentPage === 'provider-leads' && currentUser && currentUser.role === UserRole.PROVIDER) {
+      // NOTE: We now use providerLeads fetched from API instead of all requests
+      const visibleRequests = providerLeads.filter(r => !ignoredRequestIds.includes(r.id));
+      const currentProvider = providers.find(p => p.id === currentUser.id);
+      
+      return (
+        <ProviderLeadsPage 
+          requests={visibleRequests} // Pass pre-filtered leads
+          allRequests={requests} // Pass all requests for "My Proposals" cross-referencing
+          currentProviderId={currentUser.id}
+          currentProvider={currentProvider} 
+          onSubmitQuote={(requestId) => setQuoteRequest(requestId)}
+          onIgnoreRequest={(requestId) => {
+             setIgnoredRequestIds(prev => [...prev, requestId]);
+             showToast('Request hidden', 'info');
+          }}
+        />
+      );
+    }
+
     if (currentPage === 'provider-profile' && selectedProviderId) {
        const provider = providers.find(p => p.id === selectedProviderId);
        if (provider) {
@@ -270,13 +362,22 @@ const App: React.FC = () => {
            <ProviderProfile 
              provider={provider} 
              onBack={() => setCurrentPage('dashboard')}
+             showToast={showToast}
              onSubmitReview={async (id, review) => {
-               await api.addReview(id, review);
-               fetchData();
+               try {
+                 await api.addReview(id, review);
+                 fetchData(currentUser);
+                 showToast('Review posted successfully', 'success');
+               } catch(e) { showToast('Failed to post review', 'error'); }
              }}
              onRequestQuote={() => {
-               setCurrentPage('home');
-               setShowRequestForm(true);
+               if(!currentUser) {
+                  showToast('Please sign in to request a quote', 'info');
+                  setCurrentPage('dashboard'); // Redirect to auth
+               } else {
+                  setCurrentPage('home');
+                  setShowRequestForm(true);
+               }
              }}
            />
          );
@@ -293,11 +394,28 @@ const App: React.FC = () => {
     }
 
     if (currentPage === 'dashboard') {
+      // ADMIN VIEW
+      if (currentUser?.role === UserRole.ADMIN) {
+        return (
+          <AdminDashboard
+             requests={requests}
+             providers={providers}
+             users={allUsers}
+             onDeleteRequest={handleDeleteRequest}
+             onToggleVerifyProvider={handleToggleVerifyProvider}
+             activeSection={adminSection}
+             showToast={showToast}
+          />
+        );
+      }
+
+      // NORMAL VIEWS
       let visibleRequests = requests;
       if (currentUser?.role === UserRole.USER) {
         visibleRequests = requests.filter(r => r.userId === currentUser.id);
       } else if (currentUser?.role === UserRole.PROVIDER) {
-        visibleRequests = requests.filter(r => !ignoredRequestIds.includes(r.id));
+        // For Dashboard, we also want to show the specific leads in the "New Opportunities" section
+        visibleRequests = providerLeads.filter(r => !ignoredRequestIds.includes(r.id));
       }
 
       const currentProviderProfile = currentUser?.role === UserRole.PROVIDER 
@@ -307,7 +425,7 @@ const App: React.FC = () => {
       return (
         <Dashboard 
           role={currentUser!.role}
-          requests={visibleRequests}
+          requests={visibleRequests} // This now carries filtered leads for providers
           conversations={conversations}
           currentProvider={currentProviderProfile}
           currentProviderId={currentUser?.id}
@@ -329,19 +447,20 @@ const App: React.FC = () => {
              setActiveChat({ name: userName, id: userId });
           }}
           onSubmitQuote={(requestId) => setQuoteRequest(requestId)}
-          onIgnoreRequest={(requestId) => setIgnoredRequestIds(prev => [...prev, requestId])}
+          onIgnoreRequest={(requestId) => {
+             setIgnoredRequestIds(prev => [...prev, requestId]);
+             showToast('Request hidden from dashboard', 'info');
+          }}
           onViewQuote={(quote) => setViewingQuote(quote)}
           onDeleteRequest={handleDeleteRequest}
         />
       );
     }
 
-    // =================================================================================
     // HOME PAGE
-    // =================================================================================
     return (
       <div className="bg-white">
-        
+        {/* ... (Existing Home Page Content - Unchanged) ... */}
         {/* MOBILE LAYOUT (App Style) */}
         <div className="md:hidden min-h-[80vh] bg-gray-50 pb-8">
            {/* Greeting Header */}
@@ -371,7 +490,6 @@ const App: React.FC = () => {
 
            {/* Mobile Content */}
            <div className="px-5 space-y-6">
-              
               {/* Promo Card */}
               <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-dubai-dark to-gray-800 text-white shadow-lg p-5">
                  <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full -mr-10 -mt-10 blur-xl"></div>
@@ -392,57 +510,30 @@ const App: React.FC = () => {
               <div>
                  <h3 className="text-sm font-bold text-gray-900 mb-3">Browse Services</h3>
                  <div className="grid grid-cols-2 gap-3">
-                    {/* Visa */}
-                    <div 
-                       onClick={() => openRequestForm(ServiceCategory.VISA)}
-                       className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center text-center active:bg-gray-50 transition-colors"
-                    >
-                       <div className="w-10 h-10 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center mb-2">
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" /></svg>
-                       </div>
+                    <div onClick={() => openRequestForm(ServiceCategory.VISA)} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center text-center active:bg-gray-50 transition-colors">
+                       <div className="w-10 h-10 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center mb-2"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" /></svg></div>
                        <span className="text-sm font-bold text-gray-800">Visas</span>
                        <span className="text-[10px] text-gray-400">Residency & Entry</span>
                     </div>
-
-                    {/* Business */}
-                    <div 
-                       onClick={() => openRequestForm(ServiceCategory.BUSINESS)}
-                       className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center text-center active:bg-gray-50 transition-colors"
-                    >
-                       <div className="w-10 h-10 rounded-full bg-purple-50 text-purple-600 flex items-center justify-center mb-2">
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
-                       </div>
+                    <div onClick={() => openRequestForm(ServiceCategory.BUSINESS)} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center text-center active:bg-gray-50 transition-colors">
+                       <div className="w-10 h-10 rounded-full bg-purple-50 text-purple-600 flex items-center justify-center mb-2"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg></div>
                        <span className="text-sm font-bold text-gray-800">Business</span>
                        <span className="text-[10px] text-gray-400">Setup & License</span>
                     </div>
-
-                    {/* Travel */}
-                    <div 
-                       onClick={() => openRequestForm(ServiceCategory.TRAVEL)}
-                       className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center text-center active:bg-gray-50 transition-colors"
-                    >
-                       <div className="w-10 h-10 rounded-full bg-green-50 text-green-600 flex items-center justify-center mb-2">
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
-                       </div>
+                    <div onClick={() => openRequestForm(ServiceCategory.TRAVEL)} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center text-center active:bg-gray-50 transition-colors">
+                       <div className="w-10 h-10 rounded-full bg-green-50 text-green-600 flex items-center justify-center mb-2"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg></div>
                        <span className="text-sm font-bold text-gray-800">Travel</span>
                        <span className="text-[10px] text-gray-400">Tours & Hotels</span>
                     </div>
-
-                    {/* Ask AI */}
-                    <div 
-                       onClick={() => setIsAiOpen(true)}
-                       className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center text-center active:bg-gray-50 transition-colors"
-                    >
-                       <div className="w-10 h-10 rounded-full bg-dubai-gold/10 text-dubai-gold flex items-center justify-center mb-2">
-                          <span className="text-lg">✨</span>
-                       </div>
+                    <div onClick={() => setIsAiOpen(true)} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center text-center active:bg-gray-50 transition-colors">
+                       <div className="w-10 h-10 rounded-full bg-dubai-gold/10 text-dubai-gold flex items-center justify-center mb-2"><span className="text-lg">✨</span></div>
                        <span className="text-sm font-bold text-gray-800">Ask AI</span>
                        <span className="text-[10px] text-gray-400">Instant Guide</span>
                     </div>
                  </div>
               </div>
 
-              {/* Recent Activity Placeholder */}
+              {/* Recent Activity */}
               <div>
                  <div className="flex justify-between items-center mb-3">
                     <h3 className="text-sm font-bold text-gray-900">Recent</h3>
@@ -468,6 +559,7 @@ const App: React.FC = () => {
         {/* DESKTOP LAYOUT (Original) */}
         <div className="hidden md:block">
           <div className="relative bg-dubai-dark text-white overflow-hidden">
+             {/* ... (Existing Desktop Banner - Unchanged) ... */}
             <div className="absolute inset-0">
               <img 
                 src="https://images.unsplash.com/photo-1512453979798-5ea904ac6605?ixlib=rb-1.2.1&auto=format&fit=crop&w=1950&q=80" 
@@ -478,7 +570,7 @@ const App: React.FC = () => {
             </div>
             <div className="relative max-w-7xl mx-auto px-4 py-24 sm:px-6 lg:px-8 flex flex-col items-start">
               <h1 className="text-4xl md:text-6xl font-bold tracking-tight mb-6">
-                Dubai Services, <span className="text-dubai-gold">Simplified.</span>
+                {siteSettings?.siteName || 'DubaiLink'}, <span className="text-dubai-gold">Simplified.</span>
               </h1>
               <p className="text-xl text-gray-300 max-w-2xl mb-10">
                 Connect with verified PROs, Business Consultants, and Travel Agencies. Get accurate quotes, compare prices, and handle everything online.
@@ -504,40 +596,20 @@ const App: React.FC = () => {
           <div className="max-w-7xl mx-auto px-4 py-16 sm:px-6 lg:px-8">
             <h2 className="text-2xl font-bold text-gray-900 mb-8">Our Services</h2>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-                {/* Visa Services */}
-                <div 
-                   onClick={() => openRequestForm(ServiceCategory.VISA)}
-                   className="bg-white rounded-2xl p-8 border border-gray-100 shadow-sm hover:shadow-md transition-shadow cursor-pointer group"
-                >
-                    <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
-                       <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" /></svg>
-                    </div>
+                <div onClick={() => openRequestForm(ServiceCategory.VISA)} className="bg-white rounded-2xl p-8 border border-gray-100 shadow-sm hover:shadow-md transition-shadow cursor-pointer group">
+                    <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform"><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" /></svg></div>
                     <h3 className="font-bold text-xl mb-2 text-gray-900">Visa Services</h3>
                     <p className="text-gray-500 mb-6">Golden Visa, Freelance, Family & Tourist Visas.</p>
                     <span className="text-dubai-blue text-sm font-bold group-hover:underline">Post Request &rarr;</span>
                 </div>
-
-                {/* Business Setup */}
-                <div 
-                   onClick={() => openRequestForm(ServiceCategory.BUSINESS)}
-                   className="bg-white rounded-2xl p-8 border border-gray-100 shadow-sm hover:shadow-md transition-shadow cursor-pointer group"
-                >
-                    <div className="w-12 h-12 bg-purple-50 text-purple-600 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
-                       <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
-                    </div>
+                <div onClick={() => openRequestForm(ServiceCategory.BUSINESS)} className="bg-white rounded-2xl p-8 border border-gray-100 shadow-sm hover:shadow-md transition-shadow cursor-pointer group">
+                    <div className="w-12 h-12 bg-purple-50 text-purple-600 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform"><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg></div>
                     <h3 className="font-bold text-xl mb-2 text-gray-900">Business Setup</h3>
                     <p className="text-gray-500 mb-6">Mainland & Freezone Company Formation.</p>
                     <span className="text-dubai-blue text-sm font-bold group-hover:underline">Post Request &rarr;</span>
                 </div>
-
-                {/* Travel Packages */}
-                <div 
-                   onClick={() => openRequestForm(ServiceCategory.TRAVEL)}
-                   className="bg-white rounded-2xl p-8 border border-gray-100 shadow-sm hover:shadow-md transition-shadow cursor-pointer group"
-                >
-                    <div className="w-12 h-12 bg-green-50 text-green-600 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
-                       <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
-                    </div>
+                <div onClick={() => openRequestForm(ServiceCategory.TRAVEL)} className="bg-white rounded-2xl p-8 border border-gray-100 shadow-sm hover:shadow-md transition-shadow cursor-pointer group">
+                    <div className="w-12 h-12 bg-green-50 text-green-600 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform"><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg></div>
                     <h3 className="font-bold text-xl mb-2 text-gray-900">Travel Packages</h3>
                     <p className="text-gray-500 mb-6">Hotel Bookings, Flights & Desert Safaris.</p>
                     <span className="text-dubai-blue text-sm font-bold group-hover:underline">Post Request &rarr;</span>
@@ -558,16 +630,20 @@ const App: React.FC = () => {
       onLoginClick={() => setCurrentPage('dashboard')}
       onPostRequest={() => { setRequestCategory(undefined); setShowRequestForm(true); }}
       notifications={notifications}
-      onMarkRead={(id) => api.markNotificationAsRead(id).then(fetchData)}
-      onMarkAllRead={() => currentUser && api.markAllNotificationsAsRead(currentUser.id).then(fetchData)}
+      onMarkRead={(id) => api.markNotificationAsRead(id).then(() => fetchData(currentUser))}
+      onMarkAllRead={() => currentUser && api.markAllNotificationsAsRead(currentUser.id).then(() => fetchData(currentUser))}
       onToggleAi={() => setIsAiOpen(!isAiOpen)}
+      siteSettings={siteSettings}
+      adminSection={adminSection}
+      setAdminSection={setAdminSection}
     >
       {renderContent()}
 
       <Toast 
-        message={toastMessage || ''} 
-        isVisible={!!toastMessage} 
-        onClose={() => setToastMessage(null)} 
+        message={toastConfig?.message || ''}
+        type={toastConfig?.type} 
+        isVisible={!!toastConfig} 
+        onClose={() => setToastConfig(null)} 
       />
 
       {isAiOpen && (
@@ -588,6 +664,7 @@ const App: React.FC = () => {
           recipientId={activeChat.id}
           currentUser={{ id: currentUser.id, role: currentUser.role }}
           onClose={() => setActiveChat(null)}
+          showToast={showToast}
         />
       )}
 

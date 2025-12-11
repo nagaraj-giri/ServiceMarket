@@ -1,16 +1,17 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { UserRole, DirectMessage } from '../types';
 import { api } from '../services/api';
+import { ToastType } from './Toast';
 
 interface DirectMessageModalProps {
   recipientName: string;
   recipientId: string;
   currentUser: { id: string, role: UserRole };
   onClose: () => void;
+  showToast?: (message: string, type: ToastType) => void;
 }
 
-const DirectMessageModal: React.FC<DirectMessageModalProps> = ({ recipientName, recipientId, currentUser, onClose }) => {
+const DirectMessageModal: React.FC<DirectMessageModalProps> = ({ recipientName, recipientId, currentUser, onClose, showToast }) => {
   const [messages, setMessages] = useState<DirectMessage[]>([]);
   const [inputText, setInputText] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -18,8 +19,12 @@ const DirectMessageModal: React.FC<DirectMessageModalProps> = ({ recipientName, 
 
   const fetchMessages = async () => {
     if (!currentUser) return;
-    const msgs = await api.getMessages(currentUser.id, recipientId);
-    setMessages(msgs);
+    try {
+      const msgs = await api.getMessages(currentUser.id, recipientId);
+      setMessages(msgs);
+    } catch (e) {
+      console.error("Failed to fetch messages");
+    }
   };
 
   useEffect(() => {
@@ -48,6 +53,7 @@ const DirectMessageModal: React.FC<DirectMessageModalProps> = ({ recipientName, 
       fetchMessages(); // Refresh immediately
     } catch (err) {
       console.error("Failed to send message", err);
+      if (showToast) showToast('Failed to send message. Please try again.', 'error');
     }
   };
 

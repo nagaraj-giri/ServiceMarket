@@ -1,34 +1,43 @@
 
 import React, { useState } from 'react';
 import { ProviderProfile as IProviderProfile, Review } from '../types';
+import { ToastType } from './Toast';
 
 interface ProviderProfileProps {
   provider: IProviderProfile;
   onBack: () => void;
-  onSubmitReview: (providerId: string, review: Omit<Review, 'id' | 'date'>) => void;
+  onSubmitReview: (providerId: string, review: Omit<Review, 'id' | 'date'>) => Promise<void>;
   onRequestQuote: () => void;
+  showToast?: (message: string, type: ToastType) => void;
 }
 
-const ProviderProfile: React.FC<ProviderProfileProps> = ({ provider, onBack, onSubmitReview, onRequestQuote }) => {
+const ProviderProfile: React.FC<ProviderProfileProps> = ({ provider, onBack, onSubmitReview, onRequestQuote, showToast }) => {
   const [newReviewRating, setNewReviewRating] = useState(5);
   const [newReviewContent, setNewReviewContent] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newReviewContent.trim()) return;
 
     setIsSubmitting(true);
-    setTimeout(() => {
-      onSubmitReview(provider.id, {
+    try {
+      // Small delay to simulate network feel before promise resolution if desired, 
+      // but assuming onSubmitReview is async
+      await new Promise(r => setTimeout(r, 800)); 
+      await onSubmitReview(provider.id, {
         author: 'Current User',
         rating: newReviewRating,
         content: newReviewContent
       });
       setNewReviewContent('');
       setNewReviewRating(5);
+      // Toast is handled by parent, or we can fallback if not provided
+    } catch (error) {
+       // Error handled by parent usually, but nice to catch
+    } finally {
       setIsSubmitting(false);
-    }, 800);
+    }
   };
 
   return (
@@ -48,15 +57,23 @@ const ProviderProfile: React.FC<ProviderProfileProps> = ({ provider, onBack, onS
           <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full -mr-16 -mt-16 blur-2xl"></div>
           
           <div className="p-6 relative z-10">
-            {/* Header: Name & Verified */}
+            {/* Header: Name & Badges */}
             <div className="flex justify-between items-start mb-2">
                 <h1 className="text-2xl font-bold leading-tight pr-4">{provider.name}</h1>
-                {provider.isVerified && (
-                  <div className="bg-blue-500/20 text-blue-100 px-2 py-1 rounded-full text-[10px] font-bold flex items-center gap-1 border border-blue-500/30 backdrop-blur-sm whitespace-nowrap flex-shrink-0">
-                    <svg className="w-3 h-3 fill-current" viewBox="0 0 20 20"><path fillRule="evenodd" d="M6.267 3.455a3.066 3.066 0 001.745-.723 3.066 3.066 0 013.976 0 3.066 3.066 0 001.745.723 3.066 3.066 0 012.812 2.812c.051.643.304 1.254.723 1.745a3.066 3.066 0 010 3.976 3.066 3.066 0 00-.723 1.745 3.066 3.066 0 01-2.812 2.812 3.066 3.066 0 00-.723-1.745 3.066 3.066 0 01-3.976 0 3.066 3.066 0 00-1.745-.723 3.066 3.066 0 01-2.812-2.812 3.066 3.066 0 00-.723-1.745 3.066 3.066 0 012.812-2.812zm7.44 5.252a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>
-                    Verified
-                  </div>
-                )}
+                <div className="flex flex-col items-end gap-2">
+                  {provider.isVerified && (
+                    <div className="bg-blue-500/20 text-blue-100 px-2 py-1 rounded-full text-[10px] font-bold flex items-center gap-1 border border-blue-500/30 backdrop-blur-sm whitespace-nowrap flex-shrink-0">
+                      <svg className="w-3 h-3 fill-current" viewBox="0 0 20 20"><path fillRule="evenodd" d="M6.267 3.455a3.066 3.066 0 001.745-.723 3.066 3.066 0 013.976 0 3.066 3.066 0 001.745.723 3.066 3.066 0 012.812 2.812c.051.643.304 1.254.723 1.745a3.066 3.066 0 010 3.976 3.066 3.066 0 00-.723 1.745 3.066 3.066 0 01-2.812 2.812 3.066 3.066 0 00-.723-1.745 3.066 3.066 0 01-3.976 0 3.066 3.066 0 00-1.745-.723 3.066 3.066 0 01-2.812-2.812 3.066 3.066 0 00-.723-1.745 3.066 3.066 0 012.812-2.812zm7.44 5.252a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>
+                      Verified
+                    </div>
+                  )}
+                  {provider.badges?.filter(b => b !== 'Verified').map((badge, idx) => (
+                     <div key={idx} className="bg-yellow-500/20 text-yellow-100 px-2 py-1 rounded-full text-[10px] font-bold flex items-center gap-1 border border-yellow-500/30 backdrop-blur-sm whitespace-nowrap flex-shrink-0">
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" /></svg>
+                        {badge}
+                     </div>
+                  ))}
+                </div>
             </div>
             
             <p className="text-gray-400 text-sm mb-5 font-medium">{provider.tagline}</p>
@@ -84,6 +101,9 @@ const ProviderProfile: React.FC<ProviderProfileProps> = ({ provider, onBack, onS
                </button>
                <button 
                   className="flex-1 bg-white/10 hover:bg-white/20 text-white py-3 rounded-xl font-bold text-sm border border-white/10 backdrop-blur-md transition-colors active:bg-white/30 flex items-center justify-center"
+                  onClick={() => {
+                     if (showToast) showToast('Messaging available from dashboard after quote', 'info');
+                  }}
                >
                   Message
                </button>
@@ -109,19 +129,6 @@ const ProviderProfile: React.FC<ProviderProfileProps> = ({ provider, onBack, onS
                   </span>
                 ))}
               </div>
-          </section>
-
-          {/* Credentials/Badges */}
-          <section className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm">
-             <h3 className="text-lg font-bold text-gray-900 mb-4">Credentials & Badges</h3>
-             <div className="flex gap-3 overflow-x-auto pb-2 hide-scrollbar">
-                {provider.badges.map((badge, idx) => (
-                   <div key={idx} className="flex-shrink-0 px-3 py-2 bg-yellow-50 text-yellow-800 border border-yellow-100 rounded-lg text-xs font-bold flex items-center gap-1">
-                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" /></svg>
-                      {badge}
-                   </div>
-                ))}
-             </div>
           </section>
 
           {/* Reviews */}

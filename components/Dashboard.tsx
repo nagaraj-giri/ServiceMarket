@@ -1,6 +1,7 @@
 
 import React, { useState } from 'react';
 import { UserRole, ServiceRequest, Quote, Conversation, ProviderProfile } from '../types';
+import { api } from '../services/api';
 
 interface DashboardProps {
   role: UserRole;
@@ -87,17 +88,7 @@ const Dashboard: React.FC<DashboardProps> = ({ role, requests, conversations = [
   // PROVIDER DASHBOARD
   // ----------------------------------------------------------------------
   if (role === UserRole.PROVIDER && activeProviderId) {
-    const newLeads = requests.filter(r => {
-      const isAvailable = r.status !== 'closed' && r.status !== 'accepted' && !r.quotes.some(q => q.providerId === activeProviderId);
-      if (!isAvailable) return false;
-      if (currentProvider && r.locality && currentProvider.location) {
-        const reqLoc = r.locality.toLowerCase().trim();
-        const provLoc = currentProvider.location.toLowerCase().trim();
-        return provLoc.includes(reqLoc) || reqLoc.includes(provLoc);
-      }
-      if (r.locality && currentProvider?.location) return false; 
-      return true;
-    });
+    const newLeads = requests.filter(r => currentProvider ? api.matchProviderToRequest(currentProvider, r) : false);
 
     const myQuotes = requests.filter(r => r.quotes.some(q => q.providerId === activeProviderId));
     const revenue = myQuotes.reduce((total, req) => {
@@ -153,7 +144,7 @@ const Dashboard: React.FC<DashboardProps> = ({ role, requests, conversations = [
                   </div>
                 </div>
               )) : (
-                <div className="text-center py-12 text-gray-400 text-sm">No new leads matching your profile.</div>
+                <div className="text-center py-12 text-gray-400 text-sm">No new leads matching your profile and location.</div>
               )}
             </div>
           </div>
@@ -217,6 +208,7 @@ const Dashboard: React.FC<DashboardProps> = ({ role, requests, conversations = [
           {requests.map(req => {
             const isExpanded = expandedRequestIds.has(req.id);
             const isRequestClosed = req.status === 'closed';
+            const shouldRefine = api.shouldNotifyToRefineCriteria(req);
 
             return (
               <div key={req.id} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden transition-all duration-300">
@@ -253,7 +245,7 @@ const Dashboard: React.FC<DashboardProps> = ({ role, requests, conversations = [
                    <div className="flex items-end justify-between border-t border-gray-50 pt-4 mt-2">
                       <div className="flex flex-col text-center sm:text-left">
                          <span className="text-3xl font-bold text-dubai-blue leading-none">{req.quotes.length}</span>
-                         <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Quotes Received</span>
+                         <span className="text-xs font-bold text-gray-400 uppercase tracking-widest mt-1">Quotes Received</span>
                       </div>
                       
                       <div className="flex items-center gap-4">
@@ -281,11 +273,24 @@ const Dashboard: React.FC<DashboardProps> = ({ role, requests, conversations = [
                    {/* Expanded Content Area */}
                    {isExpanded && (
                       <div className="mt-6 animate-in slide-in-from-top-2 duration-300">
-                         {/* Dashed Description Box (Updated Style) */}
+                         {/* Dashed Description Box */}
                          <div className="border-2 border-dashed border-dubai-blue/20 bg-blue-50/20 rounded-xl p-4 mb-6 relative">
                             <h4 className="text-[10px] font-bold text-dubai-blue uppercase tracking-widest mb-2">Description</h4>
                             <p className="text-sm text-gray-700 leading-relaxed">{req.description}</p>
                          </div>
+                         
+                         {/* Refine Criteria Alert */}
+                         {shouldRefine && (
+                            <div className="mb-6 bg-orange-50 border-l-4 border-orange-400 p-4 rounded-r-lg flex gap-3 items-start">
+                              <svg className="w-5 h-5 text-orange-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                              <div>
+                                <h4 className="text-sm font-bold text-orange-800">Receiving few quotes?</h4>
+                                <p className="text-xs text-orange-700 mt-1">
+                                  We've shared your request with nearby providers (up to 15km), but response is low. Try updating your location or broadening your request description to attract more providers.
+                                </p>
+                              </div>
+                            </div>
+                         )}
 
                          <div className="mb-6">
                             <RequestStatusStepper status={req.status} />
@@ -308,7 +313,7 @@ const Dashboard: React.FC<DashboardProps> = ({ role, requests, conversations = [
                                            </div>
                                            <div className="text-right">
                                               <div className="text-lg font-bold text-gray-900">{quote.currency} {quote.price.toLocaleString()}</div>
-                                              <div className="text-[10px] text-gray-500">{quote.timeline}</div>
+                                              <div className="text--[10px] text-gray-500">{quote.timeline}</div>
                                            </div>
                                         </div>
                                         <div className="flex items-center justify-between pt-3 border-t border-gray-100">

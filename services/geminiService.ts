@@ -1,12 +1,11 @@
 
 import { GoogleGenAI } from "@google/genai";
-import { ChatMessage } from "../types";
 
-const apiKey = process.env.API_KEY || '';
-const ai = new GoogleGenAI({ apiKey });
+// Initialize Gemini AI strictly using the environment variable as per guidelines
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 export const getDubaiInsights = async (query: string): Promise<{ text: string; groundingChunks?: any[] }> => {
-  if (!apiKey) {
+  if (!process.env.API_KEY) {
     return { text: "API Key is missing. Please check your environment configuration." };
   }
 
@@ -34,7 +33,7 @@ export const getDubaiInsights = async (query: string): Promise<{ text: string; g
 };
 
 export const getPlaceSuggestions = async (query: string): Promise<string[]> => {
-  if (!apiKey) return [];
+  if (!process.env.API_KEY) return [];
   if (!query || query.length < 3) return [];
 
   try {
@@ -43,15 +42,22 @@ export const getPlaceSuggestions = async (query: string): Promise<string[]> => {
       contents: `List 5 distinct real places, districts, or landmarks in Dubai that match the search term "${query}". Return ONLY a raw JSON array of strings (e.g. ["Business Bay", "Downtown Dubai"]). Do not include markdown formatting or explanations.`,
       config: {
         tools: [{ googleMaps: {} }],
-        responseMimeType: 'application/json'
+        // responseMimeType: 'application/json' is unsupported with googleMaps
       }
     });
 
-    const text = response.text;
+    let text = response.text;
     if (!text) return [];
     
+    // Clean potential markdown code blocks provided by the model
+    text = text.replace(/```json/g, '').replace(/```/g, '').trim();
+    
     try {
-      return JSON.parse(text);
+      const parsed = JSON.parse(text);
+      if (Array.isArray(parsed)) {
+        return parsed;
+      }
+      return [];
     } catch (e) {
       console.warn("Failed to parse JSON from place suggestions", text);
       return [];
