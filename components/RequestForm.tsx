@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ServiceCategory, ServiceRequest } from '../types';
+import { ServiceCategory, ServiceRequest, Coordinates } from '../types';
 import { DUBAI_LOCALITIES } from '../constants';
-import { getPlaceSuggestions } from '../services/geminiService';
+import { getPlaceSuggestions, PlaceSuggestion } from '../services/geminiService';
 
 interface RequestFormProps {
   onSubmit: (request: Omit<ServiceRequest, 'id' | 'quotes' | 'status' | 'createdAt'>) => void;
@@ -14,10 +14,11 @@ const RequestForm: React.FC<RequestFormProps> = ({ onSubmit, onCancel, initialCa
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [locality, setLocality] = useState('');
+  const [selectedCoordinates, setSelectedCoordinates] = useState<Coordinates | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Autocomplete state
-  const [filteredLocalities, setFilteredLocalities] = useState<string[]>([]);
+  const [filteredLocalities, setFilteredLocalities] = useState<PlaceSuggestion[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -41,16 +42,26 @@ const RequestForm: React.FC<RequestFormProps> = ({ onSubmit, onCancel, initialCa
       if (locality.length >= 3) {
         setIsLoadingSuggestions(true);
         // Fallback to static filter first for immediate feedback
-        const staticMatches = DUBAI_LOCALITIES.filter(l => l.toLowerCase().includes(locality.toLowerCase()));
+        const staticMatches: PlaceSuggestion[] = DUBAI_LOCALITIES
+          .filter(l => l.toLowerCase().includes(locality.toLowerCase()))
+          .map(l => ({ name: l }));
+          
         setFilteredLocalities(staticMatches);
         
         // Then fetch AI suggestions
         try {
           const aiSuggestions = await getPlaceSuggestions(locality);
           if (aiSuggestions.length > 0) {
-            // Merge and deduplicate
-            const combined = Array.from(new Set([...aiSuggestions, ...staticMatches]));
-            setFilteredLocalities(combined.slice(0, 8));
+            // Merge maps suggestions with static ones, preferring maps (for coords)
+            const mapMap = new Map<string, PlaceSuggestion>();
+            
+            // Add static first
+            staticMatches.forEach(s => mapMap.set(s.name, s));
+            
+            // Overwrite/Add AI suggestions
+            aiSuggestions.forEach(s => mapMap.set(s.name, s));
+            
+            setFilteredLocalities(Array.from(mapMap.values()).slice(0, 8));
           }
         } catch (err) {
           // Keep static matches if AI fails
@@ -58,7 +69,10 @@ const RequestForm: React.FC<RequestFormProps> = ({ onSubmit, onCancel, initialCa
           setIsLoadingSuggestions(false);
         }
       } else {
-        setFilteredLocalities(DUBAI_LOCALITIES.filter(l => l.toLowerCase().includes(locality.toLowerCase())));
+        const staticMatches: PlaceSuggestion[] = DUBAI_LOCALITIES
+          .filter(l => l.toLowerCase().includes(locality.toLowerCase()))
+          .map(l => ({ name: l }));
+        setFilteredLocalities(staticMatches);
       }
     };
 
@@ -68,11 +82,15 @@ const RequestForm: React.FC<RequestFormProps> = ({ onSubmit, onCancel, initialCa
 
   const handleLocalityChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setLocality(e.target.value);
+    setSelectedCoordinates(null); // Reset coords on manual type
     setShowSuggestions(true);
   };
 
-  const handleSuggestionClick = (suggestion: string) => {
-    setLocality(suggestion);
+  const handleSuggestionClick = (suggestion: PlaceSuggestion) => {
+    setLocality(suggestion.name);
+    if (suggestion.coordinates) {
+      setSelectedCoordinates(suggestion.coordinates);
+    }
     setShowSuggestions(false);
   };
 
@@ -82,11 +100,12 @@ const RequestForm: React.FC<RequestFormProps> = ({ onSubmit, onCancel, initialCa
     // Simulate API delay
     setTimeout(() => {
       onSubmit({
-        userId: 'current-user', // Mocked
+        userId: 'current-user', // Mocked, replaced in App.tsx
         category,
         title,
         description,
-        locality
+        locality,
+        coordinates: selectedCoordinates || undefined
       });
       setIsSubmitting(false);
     }, 1000);
@@ -150,10 +169,14 @@ const RequestForm: React.FC<RequestFormProps> = ({ onSubmit, onCancel, initialCa
             <div className="relative" ref={wrapperRef}>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                  </svg>
+                  {selectedCoordinates ? (
+                     <svg className="h-5 w-5 text-green-500" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" /></svg>
+                  ) : (
+                     <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                     </svg>
+                  )}
                 </div>
                 <input
                   type="text"
@@ -162,7 +185,10 @@ const RequestForm: React.FC<RequestFormProps> = ({ onSubmit, onCancel, initialCa
                   onChange={handleLocalityChange}
                   onFocus={() => {
                      // Initial suggestions from static list
-                     setFilteredLocalities(DUBAI_LOCALITIES.filter(l => l.toLowerCase().includes(locality.toLowerCase())).slice(0, 8));
+                     const staticMatches = DUBAI_LOCALITIES
+                        .filter(l => l.toLowerCase().includes(locality.toLowerCase()))
+                        .map(l => ({ name: l }));
+                     setFilteredLocalities(staticMatches.slice(0, 8));
                      setShowSuggestions(true);
                   }}
                   placeholder="Search area (e.g. Business Bay)"
@@ -183,20 +209,25 @@ const RequestForm: React.FC<RequestFormProps> = ({ onSubmit, onCancel, initialCa
                 <ul className="absolute z-10 w-full bg-white shadow-xl max-h-60 rounded-md py-1 text-base ring-1 ring-black ring-opacity-5 overflow-auto focus:outline-none sm:text-sm mt-1 border border-gray-100">
                   {filteredLocalities.map((loc, idx) => (
                     <li
-                      key={`${loc}-${idx}`}
+                      key={`${loc.name}-${idx}`}
                       onClick={() => handleSuggestionClick(loc)}
-                      className="cursor-pointer select-none relative py-2.5 pl-3 pr-9 hover:bg-gray-50 text-gray-900 border-b border-gray-50 last:border-0 flex items-center gap-2"
+                      className="cursor-pointer select-none relative py-2.5 pl-3 pr-3 hover:bg-gray-50 text-gray-900 border-b border-gray-50 last:border-0 flex items-center justify-between"
                     >
-                      <svg className="h-4 w-4 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                      </svg>
-                      <span className="block truncate">{loc}</span>
+                      <div className="flex items-center gap-2 truncate">
+                          <svg className={`h-4 w-4 flex-shrink-0 ${loc.coordinates ? 'text-green-500' : 'text-gray-400'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                          </svg>
+                          <span className="block truncate">{loc.name}</span>
+                      </div>
+                      {loc.coordinates && (
+                        <div className="flex items-center bg-gray-100 px-1.5 py-0.5 rounded border border-gray-200">
+                            <img src="https://www.gstatic.com/images/branding/product/1x/maps_round_48dp.png" alt="Maps" className="w-3 h-3 mr-1" />
+                            <span className="text-[9px] text-gray-500 font-medium">Maps Verified</span>
+                        </div>
+                      )}
                     </li>
                   ))}
-                  <li className="py-2 px-3 text-xs text-center text-gray-400 bg-gray-50/50">
-                    Suggestions powered by Google Maps
-                  </li>
                 </ul>
               )}
             </div>

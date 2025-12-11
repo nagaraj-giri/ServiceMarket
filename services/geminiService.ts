@@ -1,8 +1,12 @@
-
 import { GoogleGenAI } from "@google/genai";
 
 // Initialize Gemini AI strictly using the environment variable as per guidelines
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+
+export interface PlaceSuggestion {
+  name: string;
+  coordinates?: { lat: number; lng: number };
+}
 
 export const getDubaiInsights = async (query: string): Promise<{ text: string; groundingChunks?: any[] }> => {
   if (!process.env.API_KEY) {
@@ -32,17 +36,17 @@ export const getDubaiInsights = async (query: string): Promise<{ text: string; g
   }
 };
 
-export const getPlaceSuggestions = async (query: string): Promise<string[]> => {
+export const getPlaceSuggestions = async (query: string): Promise<PlaceSuggestion[]> => {
   if (!process.env.API_KEY) return [];
   if (!query || query.length < 3) return [];
 
   try {
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
-      contents: `List 5 distinct real places, districts, or landmarks in Dubai that match the search term "${query}". Return ONLY a raw JSON array of strings (e.g. ["Business Bay", "Downtown Dubai"]). Do not include markdown formatting or explanations.`,
+      contents: `Find 5 distinct real places, districts, or landmarks in Dubai that match the search term "${query}". Use Google Maps data to verify their existence and location. Return ONLY a raw JSON array of objects with the following structure: [{ "name": "Place Name", "lat": 25.123, "lng": 55.123 }]. Do not include markdown formatting or explanations.`,
       config: {
         tools: [{ googleMaps: {} }],
-        // responseMimeType: 'application/json' is unsupported with googleMaps
+        // responseMimeType: 'application/json' is unsupported with googleMaps tool in some contexts, so we parse text manually
       }
     });
 
@@ -55,7 +59,11 @@ export const getPlaceSuggestions = async (query: string): Promise<string[]> => {
     try {
       const parsed = JSON.parse(text);
       if (Array.isArray(parsed)) {
-        return parsed;
+        // Validate structure
+        return parsed.map(item => ({
+          name: item.name || item.placeName || String(item),
+          coordinates: (item.lat && item.lng) ? { lat: item.lat, lng: item.lng } : undefined
+        }));
       }
       return [];
     } catch (e) {

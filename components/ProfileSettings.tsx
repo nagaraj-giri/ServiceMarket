@@ -1,8 +1,7 @@
-
 import React, { useState, useEffect, useRef } from 'react';
-import { UserRole, ServiceType } from '../types';
+import { UserRole, ServiceType, Coordinates } from '../types';
 import { DUBAI_LOCALITIES } from '../constants';
-import { getPlaceSuggestions } from '../services/geminiService';
+import { getPlaceSuggestions, PlaceSuggestion } from '../services/geminiService';
 import { api } from '../services/api';
 import FileUploader from './FileUploader';
 
@@ -25,14 +24,15 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role, initialData, on
     description: '',
     services: [] as string[],
     serviceTypes: [] as string[],
-    imageUrl: '', // New field for image URL
+    imageUrl: '',
+    coordinates: undefined as Coordinates | undefined,
   });
   const [newService, setNewService] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [availableServiceTypes, setAvailableServiceTypes] = useState<ServiceType[]>([]);
 
   // Autocomplete state for location
-  const [filteredLocalities, setFilteredLocalities] = useState<string[]>([]);
+  const [filteredLocalities, setFilteredLocalities] = useState<PlaceSuggestion[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
   const locationWrapperRef = useRef<HTMLDivElement>(null);
@@ -61,7 +61,10 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role, initialData, on
       if (formData.location.length >= 3) {
         setIsLoadingSuggestions(true);
         // Fallback to static filter first
-        const staticMatches = DUBAI_LOCALITIES.filter(l => l.toLowerCase().includes(formData.location.toLowerCase()));
+        const staticMatches: PlaceSuggestion[] = DUBAI_LOCALITIES
+           .filter(l => l.toLowerCase().includes(formData.location.toLowerCase()))
+           .map(l => ({ name: l }));
+        
         setFilteredLocalities(staticMatches);
         
         // Then fetch AI suggestions
@@ -69,8 +72,10 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role, initialData, on
           const aiSuggestions = await getPlaceSuggestions(formData.location);
           if (aiSuggestions.length > 0) {
             // Merge and deduplicate
-            const combined = Array.from(new Set([...aiSuggestions, ...staticMatches]));
-            setFilteredLocalities(combined.slice(0, 8));
+            const mapMap = new Map<string, PlaceSuggestion>();
+            staticMatches.forEach(s => mapMap.set(s.name, s));
+            aiSuggestions.forEach(s => mapMap.set(s.name, s));
+            setFilteredLocalities(Array.from(mapMap.values()).slice(0, 8));
           }
         } catch (err) {
           // Keep static matches
@@ -78,7 +83,10 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role, initialData, on
           setIsLoadingSuggestions(false);
         }
       } else {
-        setFilteredLocalities(DUBAI_LOCALITIES.filter(l => l.toLowerCase().includes(formData.location.toLowerCase())));
+        const staticMatches: PlaceSuggestion[] = DUBAI_LOCALITIES
+           .filter(l => l.toLowerCase().includes(formData.location.toLowerCase()))
+           .map(l => ({ name: l }));
+        setFilteredLocalities(staticMatches);
       }
     };
 
@@ -97,7 +105,8 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role, initialData, on
           ...prev, 
           ...initialData,
           serviceTypes: initialData.serviceTypes || [],
-          services: initialData.services || []
+          services: initialData.services || [],
+          coordinates: initialData.coordinates // Ensure coords are loaded
       }));
     } else if (role === UserRole.PROVIDER && !prevDataRef.current) {
       // Default mock for provider if no initial data AND not previously loaded
@@ -228,20 +237,27 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role, initialData, on
               <div className="relative" ref={locationWrapperRef}>
                 <div className="relative">
                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                      <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                      </svg>
+                      {formData.coordinates ? (
+                        <svg className="h-5 w-5 text-green-500" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" /></svg>
+                      ) : (
+                        <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                      )}
                    </div>
                    <input 
                       type="text" 
                       value={formData.location}
                       onChange={(e) => {
-                        setFormData({...formData, location: e.target.value});
+                        setFormData({...formData, location: e.target.value, coordinates: undefined}); // clear coords on edit
                         setShowSuggestions(true);
                       }}
                       onFocus={() => {
-                        setFilteredLocalities(DUBAI_LOCALITIES.filter(l => l.toLowerCase().includes(formData.location.toLowerCase())).slice(0, 8));
+                        const staticMatches = DUBAI_LOCALITIES
+                           .filter(l => l.toLowerCase().includes(formData.location.toLowerCase()))
+                           .map(l => ({ name: l }));
+                        setFilteredLocalities(staticMatches.slice(0, 8));
                         setShowSuggestions(true);
                       }}
                       className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-dubai-gold focus:border-transparent outline-none" 
@@ -261,18 +277,30 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role, initialData, on
                   <ul className="absolute z-10 w-full bg-white shadow-xl max-h-60 rounded-md py-1 text-base ring-1 ring-black ring-opacity-5 overflow-auto focus:outline-none sm:text-sm mt-1 border border-gray-100">
                     {filteredLocalities.map((loc, idx) => (
                       <li
-                        key={`${loc}-${idx}`}
+                        key={`${loc.name}-${idx}`}
                         onClick={() => {
-                          setFormData({...formData, location: loc});
+                          setFormData({
+                             ...formData, 
+                             location: loc.name,
+                             coordinates: loc.coordinates 
+                          });
                           setShowSuggestions(false);
                         }}
-                        className="cursor-pointer select-none relative py-2.5 pl-3 pr-9 hover:bg-gray-50 text-gray-900 border-b border-gray-50 last:border-0 flex items-center gap-2"
+                        className="cursor-pointer select-none relative py-2.5 pl-3 pr-3 hover:bg-gray-50 text-gray-900 border-b border-gray-50 last:border-0 flex items-center justify-between"
                       >
-                         <svg className="h-4 w-4 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                         </svg>
-                         <span className="block truncate">{loc}</span>
+                         <div className="flex items-center gap-2 truncate">
+                             <svg className={`h-4 w-4 flex-shrink-0 ${loc.coordinates ? 'text-green-500' : 'text-gray-400'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                             </svg>
+                             <span className="block truncate">{loc.name}</span>
+                         </div>
+                         {loc.coordinates && (
+                            <div className="flex items-center bg-gray-100 px-1.5 py-0.5 rounded border border-gray-200">
+                                <img src="https://www.gstatic.com/images/branding/product/1x/maps_round_48dp.png" alt="Maps" className="w-3 h-3 mr-1" />
+                                <span className="text-[9px] text-gray-500 font-medium">Maps Verified</span>
+                            </div>
+                         )}
                       </li>
                     ))}
                   </ul>

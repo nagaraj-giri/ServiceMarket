@@ -218,8 +218,6 @@ export const api = {
     // Store in localStorage to persist across reloads
     localStorage.setItem(DEMO_USER_KEY, JSON.stringify(demoUser));
     
-    // If provider, ensure a mock provider profile exists in local state context
-    // (Note: This won't write to Firestore if rules block it, but allows UI to function)
     return demoUser;
   },
 
@@ -342,7 +340,8 @@ export const api = {
   createRequest: async (
     reqData: Omit<ServiceRequest, "id" | "status" | "quotes" | "createdAt">
   ): Promise<ServiceRequest> => {
-    const coords = reqData.locality ? getCoordinates(reqData.locality) : undefined;
+    // Priority: Coordinates passed from AI/Maps > Static lookup > undefined
+    const coords = reqData.coordinates || (reqData.locality ? getCoordinates(reqData.locality) : undefined);
 
     const newReqData = {
       ...reqData,
@@ -544,9 +543,9 @@ export const api = {
     updates: Partial<ProviderProfile>
   ): Promise<ProviderProfile> => {
     const provRef = doc(db, "providers", providerId);
-    let newCoords: Coordinates | undefined = undefined;
+    let newCoords: Coordinates | undefined = updates.coordinates;
 
-    if (updates.location) {
+    if (!newCoords && updates.location) {
       newCoords = getCoordinates(updates.location);
     }
 
