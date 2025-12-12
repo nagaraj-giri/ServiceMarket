@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo } from 'react';
 import { ServiceRequest, ProviderProfile } from '../types';
 import { api } from '../services/api';
@@ -16,6 +15,7 @@ const ProviderLeadsPage: React.FC<ProviderLeadsPageProps> = ({ requests, allRequ
   const [activeTab, setActiveTab] = useState<'leads' | 'quotes'>('leads');
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCategory, setFilterCategory] = useState<string>('All');
+  const [sortOption, setSortOption] = useState<string>('newest');
   const [expandedRequestId, setExpandedRequestId] = useState<string | null>(null);
 
   // Logic to separate data
@@ -34,20 +34,41 @@ const ProviderLeadsPage: React.FC<ProviderLeadsPageProps> = ({ requests, allRequ
     return { leads: leadsList, myQuotes: quotesList };
   }, [requests, allRequests, currentProviderId]);
 
-  // Filtering Logic
-  const filterData = (data: ServiceRequest[]) => {
-    return data.filter(item => {
+  // Filtering & Sorting Logic
+  const processData = (data: ServiceRequest[]) => {
+    // 1. Filter
+    let processed = data.filter(item => {
       const matchesSearch = item.title.toLowerCase().includes(searchTerm.toLowerCase()) || 
                             item.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
                             (item.locality && item.locality.toLowerCase().includes(searchTerm.toLowerCase()));
       const matchesCategory = filterCategory === 'All' || item.category === filterCategory;
-      
       return matchesSearch && matchesCategory;
     });
+
+    // 2. Sort
+    processed.sort((a, b) => {
+        const dateA = new Date(a.createdAt).getTime();
+        const dateB = new Date(b.createdAt).getTime();
+
+        if (sortOption === 'newest') return dateB - dateA;
+        if (sortOption === 'oldest') return dateA - dateB;
+        
+        if (activeTab === 'quotes') {
+             const qA = a.quotes.find(q => q.providerId === currentProviderId);
+             const qB = b.quotes.find(q => q.providerId === currentProviderId);
+             if (qA && qB) {
+                 if (sortOption === 'price_high') return qB.price - qA.price;
+                 if (sortOption === 'price_low') return qA.price - qB.price;
+             }
+        }
+        return 0;
+    });
+
+    return processed;
   };
 
-  const displayedLeads = filterData(leads);
-  const displayedQuotes = filterData(myQuotes);
+  const displayedLeads = processData(leads);
+  const displayedQuotes = processData(myQuotes);
 
   const categories = ['All', ...Array.from(new Set(allRequests.map(r => r.category)))];
 
@@ -60,31 +81,49 @@ const ProviderLeadsPage: React.FC<ProviderLeadsPageProps> = ({ requests, allRequ
         </div>
         
         {/* Controls */}
-        <div className="flex flex-wrap gap-3 w-full md:w-auto">
-          <div className="relative flex-1 md:w-64">
+        <div className="flex flex-wrap gap-3 w-full md:w-auto bg-gray-50 p-2 rounded-xl border border-gray-200">
+          <div className="relative flex-1 md:w-56">
             <input
               type="text"
               placeholder="Search requests..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-dubai-gold outline-none text-sm"
+              className="w-full pl-9 pr-4 py-2 bg-white border border-gray-200 rounded-lg focus:ring-2 focus:ring-dubai-gold outline-none text-sm"
             />
             <svg className="w-4 h-4 text-gray-400 absolute left-3 top-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
           </div>
-          <select 
-            value={filterCategory}
-            onChange={(e) => setFilterCategory(e.target.value)}
-            className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-dubai-gold outline-none text-sm bg-white"
-          >
-            {categories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
-          </select>
+          
+          <div className="flex gap-2 flex-1">
+            <select 
+                value={filterCategory}
+                onChange={(e) => setFilterCategory(e.target.value)}
+                className="px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-dubai-gold outline-none text-sm bg-white cursor-pointer"
+            >
+                {categories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+            </select>
+
+            <select 
+                value={sortOption}
+                onChange={(e) => setSortOption(e.target.value)}
+                className="px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-dubai-gold outline-none text-sm bg-white cursor-pointer"
+            >
+                <option value="newest">Newest First</option>
+                <option value="oldest">Oldest First</option>
+                {activeTab === 'quotes' && (
+                    <>
+                        <option value="price_low">Price: Low to High</option>
+                        <option value="price_high">Price: High to Low</option>
+                    </>
+                )}
+            </select>
+          </div>
         </div>
       </div>
 
       {/* Tabs */}
       <div className="flex border-b border-gray-200 mb-6">
         <button
-          onClick={() => setActiveTab('leads')}
+          onClick={() => { setActiveTab('leads'); setSortOption('newest'); }}
           className={`pb-4 px-6 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 ${
             activeTab === 'leads' ? 'border-dubai-gold text-dubai-gold' : 'border-transparent text-gray-500 hover:text-gray-700'
           }`}
@@ -95,7 +134,7 @@ const ProviderLeadsPage: React.FC<ProviderLeadsPageProps> = ({ requests, allRequ
           </span>
         </button>
         <button
-          onClick={() => setActiveTab('quotes')}
+          onClick={() => { setActiveTab('quotes'); setSortOption('newest'); }}
           className={`pb-4 px-6 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 ${
             activeTab === 'quotes' ? 'border-dubai-gold text-dubai-gold' : 'border-transparent text-gray-500 hover:text-gray-700'
           }`}
@@ -117,11 +156,11 @@ const ProviderLeadsPage: React.FC<ProviderLeadsPageProps> = ({ requests, allRequ
                  <div className="mx-auto w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mb-4">
                     <svg className="w-8 h-8 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
                  </div>
-                 <h3 className="text-lg font-bold text-gray-900">No new leads found</h3>
-                 <p className="text-sm text-gray-500">
-                   {currentProvider 
-                     ? "Try adjusting your filters or update your service categories/location." 
-                     : "Please ensure your provider profile is fully set up."}
+                 <h3 className="text-lg font-bold text-gray-900">No leads found</h3>
+                 <p className="text-sm text-gray-500 mt-1">
+                   {searchTerm || filterCategory !== 'All' 
+                     ? "Try adjusting your filters to see more results." 
+                     : (currentProvider ? "Waiting for new requests in your area." : "Complete your profile to see leads.")}
                  </p>
                </div>
             ) : (
@@ -169,8 +208,8 @@ const ProviderLeadsPage: React.FC<ProviderLeadsPageProps> = ({ requests, allRequ
           <>
             {displayedQuotes.length === 0 ? (
                <div className="text-center py-20 bg-white rounded-xl border border-dashed border-gray-200">
-                 <h3 className="text-lg font-bold text-gray-900">No proposals submitted</h3>
-                 <p className="text-sm text-gray-500">Head to the Opportunity Market to start quoting.</p>
+                 <h3 className="text-lg font-bold text-gray-900">No proposals found</h3>
+                 <p className="text-sm text-gray-500">{searchTerm ? 'Try different search terms.' : 'Head to the Opportunity Market to start quoting.'}</p>
                </div>
             ) : (
                <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">

@@ -1,6 +1,7 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { UserRole, ServiceType, Coordinates } from '../types';
-import { DUBAI_LOCALITIES } from '../constants';
+import { REAL_DUBAI_LOCATIONS } from '../constants';
 import { getPlaceSuggestions, PlaceSuggestion } from '../services/geminiService';
 import { api } from '../services/api';
 import FileUploader from './FileUploader';
@@ -31,6 +32,12 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role, initialData, on
   const [isSaving, setIsSaving] = useState(false);
   const [availableServiceTypes, setAvailableServiceTypes] = useState<ServiceType[]>([]);
 
+  // Password Reset State
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+  const [passwordSuccess, setPasswordSuccess] = useState('');
+
   // Autocomplete state for location
   const [filteredLocalities, setFilteredLocalities] = useState<PlaceSuggestion[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -55,43 +62,38 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role, initialData, on
     };
   }, [locationWrapperRef]);
 
-  // Debounced search for dynamic suggestions
+  // Optimized search for dynamic suggestions with Staged Data priority
   useEffect(() => {
-    const fetchSuggestions = async () => {
-      if (formData.location.length >= 3) {
-        setIsLoadingSuggestions(true);
-        // Fallback to static filter first
-        const staticMatches: PlaceSuggestion[] = DUBAI_LOCALITIES
-           .filter(l => l.toLowerCase().includes(formData.location.toLowerCase()))
-           .map(l => ({ name: l }));
-        
-        setFilteredLocalities(staticMatches);
-        
-        // Then fetch AI suggestions
-        try {
-          const aiSuggestions = await getPlaceSuggestions(formData.location);
-          if (aiSuggestions.length > 0) {
-            // Merge and deduplicate
-            const mapMap = new Map<string, PlaceSuggestion>();
-            staticMatches.forEach(s => mapMap.set(s.name, s));
-            aiSuggestions.forEach(s => mapMap.set(s.name, s));
-            setFilteredLocalities(Array.from(mapMap.values()).slice(0, 8));
-          }
-        } catch (err) {
-          // Keep static matches
-        } finally {
-          setIsLoadingSuggestions(false);
-        }
-      } else {
-        const staticMatches: PlaceSuggestion[] = DUBAI_LOCALITIES
-           .filter(l => l.toLowerCase().includes(formData.location.toLowerCase()))
-           .map(l => ({ name: l }));
-        setFilteredLocalities(staticMatches);
-      }
-    };
+    if (!formData.location) {
+        setFilteredLocalities([]);
+        return;
+    }
 
-    const debounceTimer = setTimeout(fetchSuggestions, 600);
-    return () => clearTimeout(debounceTimer);
+    // 1. Instant Static Filter
+    const staticMatches: PlaceSuggestion[] = REAL_DUBAI_LOCATIONS
+       .filter(l => l.name.toLowerCase().includes(formData.location.toLowerCase()))
+       .map(l => ({ name: l.name, coordinates: { lat: l.lat, lng: l.lng } }));
+    
+    setFilteredLocalities(staticMatches.slice(0, 8));
+
+    // 2. Fallback to AI only if specific criteria met
+    if (staticMatches.length === 0 && formData.location.length >= 4) {
+        const debounceTimer = setTimeout(async () => {
+            setIsLoadingSuggestions(true);
+            try {
+                const aiSuggestions = await getPlaceSuggestions(formData.location);
+                setFilteredLocalities(prev => {
+                    if (formData.location.length < 4) return prev;
+                    return aiSuggestions.slice(0, 5);
+                });
+            } catch (err) {
+                // ignore
+            } finally {
+                setIsLoadingSuggestions(false);
+            }
+        }, 800);
+        return () => clearTimeout(debounceTimer);
+    }
   }, [formData.location]);
 
   useEffect(() => {
@@ -104,6 +106,7 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role, initialData, on
       setFormData(prev => ({
           ...prev, 
           ...initialData,
+          imageUrl: initialData.profileImage || initialData.imageUrl || '', // Correctly map profileImage
           serviceTypes: initialData.serviceTypes || [],
           services: initialData.services || [],
           coordinates: initialData.coordinates // Ensure coords are loaded
@@ -152,6 +155,33 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role, initialData, on
     setFormData(prev => ({ ...prev, imageUrl: url }));
   };
 
+  const handleChangePassword = async () => {
+    setPasswordError('');
+    setPasswordSuccess('');
+
+    if (newPassword.length < 6) {
+      setPasswordError('Password must be at least 6 characters.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordError('Passwords do not match.');
+      return;
+    }
+
+    try {
+      await api.updateUserPassword(newPassword);
+      setPasswordSuccess('Password updated successfully.');
+      setNewPassword('');
+      setConfirmPassword('');
+    } catch (e: any) {
+      if (e.code === 'auth/requires-recent-login') {
+        setPasswordError('For security, please logout and login again to change your password.');
+      } else {
+        setPasswordError('Failed to update password. ' + e.message);
+      }
+    }
+  };
+
   return (
     <div className="max-w-3xl mx-auto px-4 py-8">
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
@@ -179,230 +209,266 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role, initialData, on
           </div>
         </div>
 
-        <form onSubmit={handleSave} className="p-8 space-y-6">
-          {/* Image Uploader */}
-          <div className="mb-8 border-b border-gray-100 pb-8">
-            <FileUploader 
-              label={role === UserRole.PROVIDER ? 'Company Logo' : 'Profile Photo'}
-              currentImageUrl={formData.imageUrl}
-              onUploadComplete={handleImageUpload}
-              isCircular={role === UserRole.USER}
-            />
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="md:col-span-2">
-              <label className="block text-sm font-medium text-gray-700 mb-1">{role === UserRole.PROVIDER ? 'Company / Display Name' : 'Full Name'}</label>
-              <input 
-                type="text" 
-                value={formData.name}
-                onChange={(e) => setFormData({...formData, name: e.target.value})}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-dubai-gold outline-none" 
+        <div className="p-8 space-y-8">
+          <form onSubmit={handleSave} className="space-y-6">
+            {/* Image Uploader */}
+            <div className="mb-8 border-b border-gray-100 pb-8">
+              <FileUploader 
+                label={role === UserRole.PROVIDER ? 'Company Logo' : 'Profile Photo'}
+                currentImageUrl={formData.imageUrl}
+                onUploadComplete={handleImageUpload}
+                isCircular={role === UserRole.USER}
               />
             </div>
 
-            {role === UserRole.PROVIDER && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="md:col-span-2">
-                 <label className="block text-sm font-medium text-gray-700 mb-1">Tagline (Short Bio)</label>
-                 <input 
-                   type="text" 
-                   value={formData.tagline}
-                   onChange={(e) => setFormData({...formData, tagline: e.target.value})}
-                   placeholder="e.g. Fast & Reliable Visa Services"
-                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-dubai-gold outline-none" 
-                 />
+                <label className="block text-sm font-medium text-gray-700 mb-1">{role === UserRole.PROVIDER ? 'Company / Display Name' : 'Full Name'}</label>
+                <input 
+                  type="text" 
+                  value={formData.name}
+                  onChange={(e) => setFormData({...formData, name: e.target.value})}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-dubai-gold outline-none" 
+                />
               </div>
-            )}
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Email Address</label>
-              <input 
-                type="email" 
-                value={formData.email}
-                onChange={(e) => setFormData({...formData, email: e.target.value})}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-dubai-gold outline-none" 
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Phone Number</label>
-              <input 
-                type="tel" 
-                value={formData.phone}
-                onChange={(e) => setFormData({...formData, phone: e.target.value})}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-dubai-gold outline-none" 
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Location</label>
-              <div className="relative" ref={locationWrapperRef}>
-                <div className="relative">
-                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                      {formData.coordinates ? (
-                        <svg className="h-5 w-5 text-green-500" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" /></svg>
-                      ) : (
-                        <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                        </svg>
-                      )}
-                   </div>
+              {role === UserRole.PROVIDER && (
+                <div className="md:col-span-2">
+                   <label className="block text-sm font-medium text-gray-700 mb-1">Tagline (Short Bio)</label>
                    <input 
-                      type="text" 
-                      value={formData.location}
-                      onChange={(e) => {
-                        setFormData({...formData, location: e.target.value, coordinates: undefined}); // clear coords on edit
-                        setShowSuggestions(true);
-                      }}
-                      onFocus={() => {
-                        const staticMatches = DUBAI_LOCALITIES
-                           .filter(l => l.toLowerCase().includes(formData.location.toLowerCase()))
-                           .map(l => ({ name: l }));
-                        setFilteredLocalities(staticMatches.slice(0, 8));
-                        setShowSuggestions(true);
-                      }}
-                      className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-dubai-gold focus:border-transparent outline-none" 
-                      placeholder="Search area..."
-                      autoComplete="off"
+                     type="text" 
+                     value={formData.tagline}
+                     onChange={(e) => setFormData({...formData, tagline: e.target.value})}
+                     placeholder="e.g. Fast & Reliable Visa Services"
+                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-dubai-gold outline-none" 
                    />
-                   {isLoadingSuggestions && (
-                     <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
-                       <svg className="animate-spin h-4 w-4 text-dubai-gold" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                       </svg>
-                     </div>
-                   )}
                 </div>
-                {showSuggestions && filteredLocalities.length > 0 && (
-                  <ul className="absolute z-10 w-full bg-white shadow-xl max-h-60 rounded-md py-1 text-base ring-1 ring-black ring-opacity-5 overflow-auto focus:outline-none sm:text-sm mt-1 border border-gray-100">
-                    {filteredLocalities.map((loc, idx) => (
-                      <li
-                        key={`${loc.name}-${idx}`}
-                        onClick={() => {
-                          setFormData({
-                             ...formData, 
-                             location: loc.name,
-                             coordinates: loc.coordinates 
-                          });
-                          setShowSuggestions(false);
-                        }}
-                        className="cursor-pointer select-none relative py-2.5 pl-3 pr-3 hover:bg-gray-50 text-gray-900 border-b border-gray-50 last:border-0 flex items-center justify-between"
-                      >
-                         <div className="flex items-center gap-2 truncate">
-                             <svg className={`h-4 w-4 flex-shrink-0 ${loc.coordinates ? 'text-green-500' : 'text-gray-400'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                             </svg>
-                             <span className="block truncate">{loc.name}</span>
-                         </div>
-                         {loc.coordinates && (
-                            <div className="flex items-center bg-gray-100 px-1.5 py-0.5 rounded border border-gray-200">
-                                <img src="https://www.gstatic.com/images/branding/product/1x/maps_round_48dp.png" alt="Maps" className="w-3 h-3 mr-1" />
-                                <span className="text-[9px] text-gray-500 font-medium">Maps Verified</span>
-                            </div>
-                         )}
-                      </li>
-                    ))}
-                  </ul>
-                )}
+              )}
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Email Address</label>
+                <input 
+                  type="email" 
+                  value={formData.email}
+                  onChange={(e) => setFormData({...formData, email: e.target.value})}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-dubai-gold outline-none" 
+                />
               </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Phone Number</label>
+                <input 
+                  type="tel" 
+                  value={formData.phone}
+                  onChange={(e) => setFormData({...formData, phone: e.target.value})}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-dubai-gold outline-none" 
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Location</label>
+                <div className="relative" ref={locationWrapperRef}>
+                  <div className="relative">
+                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                        {formData.coordinates ? (
+                          <svg className="h-5 w-5 text-green-500" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" /></svg>
+                        ) : (
+                          <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                          </svg>
+                        )}
+                     </div>
+                     <input 
+                        type="text" 
+                        value={formData.location}
+                        onChange={(e) => {
+                          setFormData({...formData, location: e.target.value, coordinates: undefined}); // clear coords on edit
+                          setShowSuggestions(true);
+                        }}
+                        onFocus={() => setShowSuggestions(true)}
+                        className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-dubai-gold focus:border-transparent outline-none" 
+                        placeholder="Search area..."
+                        autoComplete="off"
+                     />
+                     {isLoadingSuggestions && (
+                       <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+                         <svg className="animate-spin h-4 w-4 text-dubai-gold" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                         </svg>
+                       </div>
+                     )}
+                  </div>
+                  {showSuggestions && filteredLocalities.length > 0 && (
+                    <ul className="absolute z-10 w-full bg-white shadow-xl max-h-60 rounded-md py-1 text-base ring-1 ring-black ring-opacity-5 overflow-auto focus:outline-none sm:text-sm mt-1 border border-gray-100">
+                      {filteredLocalities.map((loc, idx) => (
+                        <li
+                          key={`${loc.name}-${idx}`}
+                          onClick={() => {
+                            setFormData({
+                               ...formData, 
+                               location: loc.name,
+                               coordinates: loc.coordinates 
+                            });
+                            setShowSuggestions(false);
+                          }}
+                          className="cursor-pointer select-none relative py-2.5 pl-3 pr-3 hover:bg-gray-50 text-gray-900 border-b border-gray-50 last:border-0 flex items-center justify-between"
+                        >
+                           <div className="flex items-center gap-2 truncate">
+                               <svg className={`h-4 w-4 flex-shrink-0 ${loc.coordinates ? 'text-green-500' : 'text-gray-400'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                               </svg>
+                               <span className="block truncate">{loc.name}</span>
+                           </div>
+                           {loc.coordinates && (
+                              <div className="flex items-center bg-gray-100 px-1.5 py-0.5 rounded border border-gray-200">
+                                  <img src="https://www.gstatic.com/images/branding/product/1x/maps_round_48dp.png" alt="Maps" className="w-3 h-3 mr-1" />
+                                  <span className="text-[9px] text-gray-500 font-medium">Maps Verified</span>
+                              </div>
+                           )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+
+              {role === UserRole.PROVIDER && (
+                <>
+                   <div className="md:col-span-2">
+                     <label className="block text-sm font-medium text-gray-700 mb-2">Service Categories</label>
+                     {role === UserRole.PROVIDER ? (
+                        <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
+                          <div className="flex flex-wrap gap-2">
+                             {formData.serviceTypes.length > 0 ? (
+                               formData.serviceTypes.map((type, idx) => (
+                                 <span key={idx} className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-white border border-gray-200 text-gray-700 shadow-sm">
+                                   {type}
+                                 </span>
+                               ))
+                             ) : (
+                               <span className="text-sm text-gray-400 italic">No service categories assigned yet.</span>
+                             )}
+                          </div>
+                          <p className="text-xs text-gray-500 mt-3 flex items-center gap-1">
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                            Assigned by Administrator
+                          </p>
+                        </div>
+                     ) : (
+                        <div className="relative"></div>
+                     )}
+                   </div>
+
+                   <div className="md:col-span-2">
+                     <label className="block text-sm font-medium text-gray-700 mb-1">Tags</label>
+                     <div className="flex gap-2 mb-3">
+                       <input 
+                         type="text" 
+                         value={newService}
+                         onChange={(e) => setNewService(e.target.value)}
+                         onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddTag())}
+                         placeholder="Add a tag (e.g. Family Visa)"
+                         className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-dubai-gold outline-none" 
+                       />
+                       <button 
+                         type="button" 
+                         onClick={handleAddTag}
+                         className="px-4 py-2 bg-dubai-gold text-white rounded-lg hover:bg-yellow-600 font-medium"
+                       >
+                         Add
+                       </button>
+                     </div>
+                     <div className="flex flex-wrap gap-2 min-h-[40px] p-2 bg-gray-50 rounded-lg border border-gray-100">
+                         {formData.services?.length > 0 ? (
+                             formData.services.map((service, idx) => (
+                                 <span key={idx} className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-white border border-gray-200 text-gray-700 shadow-sm animate-in zoom-in-50 duration-200">
+                                     {service}
+                                     <button type="button" onClick={() => handleRemoveTag(idx)} className="ml-2 text-gray-400 hover:text-red-500 rounded-full p-0.5 hover:bg-red-50 transition-colors">
+                                         <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" /></svg>
+                                     </button>
+                                 </span>
+                             ))
+                         ) : (
+                             <span className="text-gray-400 text-sm italic p-1">No tags listed yet. Add tags to appear in search results.</span>
+                         )}
+                     </div>
+                   </div>
+                </>
+              )}
+              
+              {role === UserRole.PROVIDER && (
+                 <div className="md:col-span-2">
+                   <label className="block text-sm font-medium text-gray-700 mb-1">Full Description</label>
+                   <textarea
+                     rows={4}
+                     value={formData.description}
+                     onChange={(e) => setFormData({...formData, description: e.target.value})}
+                     placeholder="Describe your services and expertise..."
+                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-dubai-gold outline-none resize-none"
+                   />
+                 </div>
+              )}
             </div>
 
-            {role === UserRole.PROVIDER && (
-              <>
-                 <div className="md:col-span-2">
-                   <label className="block text-sm font-medium text-gray-700 mb-2">Service Categories</label>
-                   {role === UserRole.PROVIDER ? (
-                      <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
-                        <div className="flex flex-wrap gap-2">
-                           {formData.serviceTypes.length > 0 ? (
-                             formData.serviceTypes.map((type, idx) => (
-                               <span key={idx} className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-white border border-gray-200 text-gray-700 shadow-sm">
-                                 {type}
-                               </span>
-                             ))
-                           ) : (
-                             <span className="text-sm text-gray-400 italic">No service categories assigned yet.</span>
-                           )}
-                        </div>
-                        <p className="text-xs text-gray-500 mt-3 flex items-center gap-1">
-                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                          Assigned by Administrator
-                        </p>
-                      </div>
-                   ) : (
-                      <div className="relative"></div>
-                   )}
-                 </div>
+            <div className="flex justify-end gap-3">
+              <button 
+                type="button" 
+                onClick={onCancel}
+                className="px-6 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 font-medium"
+              >
+                Cancel
+              </button>
+              <button 
+                type="submit" 
+                disabled={isSaving}
+                className="px-6 py-2 bg-dubai-gold text-white rounded-lg hover:bg-yellow-600 font-medium flex items-center shadow-sm"
+              >
+                {isSaving ? 'Saving...' : 'Save Changes'}
+              </button>
+            </div>
+          </form>
 
-                 <div className="md:col-span-2">
-                   <label className="block text-sm font-medium text-gray-700 mb-1">Tags</label>
-                   <div className="flex gap-2 mb-3">
-                     <input 
-                       type="text" 
-                       value={newService}
-                       onChange={(e) => setNewService(e.target.value)}
-                       onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddTag())}
-                       placeholder="Add a tag (e.g. Family Visa)"
-                       className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-dubai-gold outline-none" 
-                     />
-                     <button 
-                       type="button" 
-                       onClick={handleAddTag}
-                       className="px-4 py-2 bg-dubai-gold text-white rounded-lg hover:bg-yellow-600 font-medium"
-                     >
-                       Add
-                     </button>
-                   </div>
-                   <div className="flex flex-wrap gap-2 min-h-[40px] p-2 bg-gray-50 rounded-lg border border-gray-100">
-                       {formData.services?.length > 0 ? (
-                           formData.services.map((service, idx) => (
-                               <span key={idx} className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-white border border-gray-200 text-gray-700 shadow-sm animate-in zoom-in-50 duration-200">
-                                   {service}
-                                   <button type="button" onClick={() => handleRemoveTag(idx)} className="ml-2 text-gray-400 hover:text-red-500 rounded-full p-0.5 hover:bg-red-50 transition-colors">
-                                       <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" /></svg>
-                                   </button>
-                               </span>
-                           ))
-                       ) : (
-                           <span className="text-gray-400 text-sm italic p-1">No tags listed yet. Add tags to appear in search results.</span>
-                       )}
-                   </div>
-                 </div>
-              </>
-            )}
-            
-            {role === UserRole.PROVIDER && (
-               <div className="md:col-span-2">
-                 <label className="block text-sm font-medium text-gray-700 mb-1">Full Description</label>
-                 <textarea
-                   rows={4}
-                   value={formData.description}
-                   onChange={(e) => setFormData({...formData, description: e.target.value})}
-                   placeholder="Describe your services and expertise..."
-                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-dubai-gold outline-none resize-none"
-                 />
-               </div>
-            )}
-          </div>
+          {/* Security / Password Reset Section */}
+          <div className="pt-8 border-t border-gray-100">
+            <h3 className="text-lg font-bold text-gray-900 mb-4">Security</h3>
+            <div className="bg-gray-50 p-6 rounded-xl border border-gray-200">
+              <h4 className="text-sm font-bold text-gray-800 mb-4">Change Password</h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">New Password</label>
+                  <input 
+                    type="password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-1 focus:ring-dubai-gold outline-none bg-white text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Confirm Password</label>
+                  <input 
+                    type="password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-1 focus:ring-dubai-gold outline-none bg-white text-sm"
+                  />
+                </div>
+              </div>
+              
+              {passwordError && <p className="text-xs text-red-500 mb-3">{passwordError}</p>}
+              {passwordSuccess && <p className="text-xs text-green-600 mb-3">{passwordSuccess}</p>}
 
-          <div className="pt-6 border-t border-gray-100 flex justify-end gap-3">
-            <button 
-              type="button" 
-              onClick={onCancel}
-              className="px-6 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 font-medium"
-            >
-              Cancel
-            </button>
-            <button 
-              type="submit" 
-              disabled={isSaving}
-              className="px-6 py-2 bg-dubai-gold text-white rounded-lg hover:bg-yellow-600 font-medium flex items-center shadow-sm"
-            >
-              {isSaving ? 'Saving...' : 'Save Changes'}
-            </button>
+              <button 
+                type="button" 
+                onClick={handleChangePassword}
+                disabled={!newPassword || !confirmPassword}
+                className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100 font-medium text-sm disabled:opacity-50"
+              >
+                Update Password
+              </button>
+            </div>
           </div>
-        </form>
+        </div>
       </div>
     </div>
   );

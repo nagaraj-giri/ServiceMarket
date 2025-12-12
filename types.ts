@@ -33,6 +33,8 @@ export interface User {
   companyName?: string; // For providers
   isBlocked?: boolean;
   joinDate?: string;
+  profileImage?: string;
+  emailVerified?: boolean; // New field for verification status
 }
 
 export interface Quote {
@@ -119,6 +121,7 @@ export interface ProviderProfile {
   location: string;
   coordinates?: Coordinates; // New: Geospatial data
   reviews: Review[];
+  profileImage?: string;
 }
 
 export interface Notification {
@@ -136,11 +139,20 @@ export interface AuditLog {
   id: string;
   action: string;
   details: string;
-  adminId: string; // ID of the user who performed the action
+  adminId: string; // ID of the user (Admin or Regular) who performed the action
+  userRole?: string; // To distinguish in logs
   timestamp: number;
   severity: 'info' | 'warning' | 'critical';
 }
 
-export type AdminSection = 'overview' | 'users' | 'requests' | 'services' | 'settings' | 'security' | 'reviews' | 'audit';
+export interface AiInteraction {
+  id: string;
+  userId: string;
+  userName: string;
+  query: string;
+  timestamp: number;
+}
+
+export type AdminSection = 'overview' | 'users' | 'requests' | 'services' | 'settings' | 'security' | 'reviews' | 'audit' | 'ai-insights';
 
 export type AnalyticsTab = 'users' | 'leads' | 'providers' | 'site';

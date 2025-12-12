@@ -1,5 +1,5 @@
-
 import React, { useState, useRef } from 'react';
+import { api } from '../services/api';
 
 interface FileUploaderProps {
   currentImageUrl?: string;
@@ -10,7 +10,6 @@ interface FileUploaderProps {
 
 const FileUploader: React.FC<FileUploaderProps> = ({ currentImageUrl, onUploadComplete, label, isCircular = false }) => {
   const [isUploading, setIsUploading] = useState(false);
-  const [progress, setProgress] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   // Use a fallback image if current is empty
@@ -33,31 +32,16 @@ const FileUploader: React.FC<FileUploaderProps> = ({ currentImageUrl, onUploadCo
     }
 
     setIsUploading(true);
-    setProgress(0);
 
-    // SIMULATE UPLOAD PROCESS (This would be Firebase Storage uploadTask)
-    const totalSteps = 10;
-    let currentStep = 0;
-
-    const interval = setInterval(() => {
-      currentStep++;
-      const newProgress = Math.round((currentStep / totalSteps) * 100);
-      setProgress(newProgress);
-
-      if (currentStep >= totalSteps) {
-        clearInterval(interval);
-        
-        // Mock successful upload response
-        // In real Firebase, this would be: const url = await getDownloadURL(snapshot.ref);
-        
-        // We create a fake local URL for preview purposes in this mock environment
-        // Or generate a random avatar URL to simulate a "new" file on a server
-        const mockServerUrl = URL.createObjectURL(file); 
-        
-        onUploadComplete(mockServerUrl);
-        setIsUploading(false);
-      }
-    }, 200); // 200ms * 10 steps = 2 seconds upload time
+    try {
+      const downloadURL = await api.uploadFile(file);
+      onUploadComplete(downloadURL);
+    } catch (error) {
+      console.error("Upload failed", error);
+      alert('Failed to upload image. Please try again.');
+    } finally {
+      setIsUploading(false);
+    }
   };
 
   return (
@@ -83,7 +67,7 @@ const FileUploader: React.FC<FileUploaderProps> = ({ currentImageUrl, onUploadCo
         {isUploading && (
           <div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center z-10">
             <div className="w-16 h-16 rounded-full border-4 border-white/20 border-t-dubai-gold animate-spin mb-2"></div>
-            <span className="text-white text-xs font-bold">{progress}%</span>
+            <span className="text-white text-xs font-bold">Uploading...</span>
           </div>
         )}
       </div>

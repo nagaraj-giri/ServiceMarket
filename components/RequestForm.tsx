@@ -1,27 +1,48 @@
+
 import React, { useState, useRef, useEffect } from 'react';
-import { ServiceCategory, ServiceRequest, Coordinates } from '../types';
-import { DUBAI_LOCALITIES } from '../constants';
+import { ServiceRequest, Coordinates, ServiceType } from '../types';
+import { REAL_DUBAI_LOCATIONS } from '../constants';
 import { getPlaceSuggestions, PlaceSuggestion } from '../services/geminiService';
+import { api } from '../services/api';
 
 interface RequestFormProps {
   onSubmit: (request: Omit<ServiceRequest, 'id' | 'quotes' | 'status' | 'createdAt'>) => void;
   onCancel: () => void;
-  initialCategory?: ServiceCategory;
+  initialCategory?: string;
 }
 
 const RequestForm: React.FC<RequestFormProps> = ({ onSubmit, onCancel, initialCategory }) => {
-  const [category, setCategory] = useState<ServiceCategory>(initialCategory || ServiceCategory.VISA);
+  // Form State
+  const [category, setCategory] = useState(initialCategory || '');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [locality, setLocality] = useState('');
   const [selectedCoordinates, setSelectedCoordinates] = useState<Coordinates | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Autocomplete state
+  // Service Category Dropdown State
+  const [availableServiceTypes, setAvailableServiceTypes] = useState<ServiceType[]>([]);
+  const [showCategorySuggestions, setShowCategorySuggestions] = useState(false);
+  const categoryWrapperRef = useRef<HTMLDivElement>(null);
+
+  // Locality Autocomplete State
   const [filteredLocalities, setFilteredLocalities] = useState<PlaceSuggestion[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
+
+  // Load Service Types on Mount
+  useEffect(() => {
+    const fetchServiceTypes = async () => {
+      try {
+        const types = await api.getServiceTypes();
+        setAvailableServiceTypes(types.filter(t => t.isActive));
+      } catch (error) {
+        console.error("Failed to load service types", error);
+      }
+    };
+    fetchServiceTypes();
+  }, []);
 
   // Handle clicking outside to close suggestions
   useEffect(() => {
@@ -29,55 +50,51 @@ const RequestForm: React.FC<RequestFormProps> = ({ onSubmit, onCancel, initialCa
       if (wrapperRef.current && !wrapperRef.current.contains(event.target as Node)) {
         setShowSuggestions(false);
       }
+      if (categoryWrapperRef.current && !categoryWrapperRef.current.contains(event.target as Node)) {
+        setShowCategorySuggestions(false);
+      }
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
     };
-  }, [wrapperRef]);
+  }, [wrapperRef, categoryWrapperRef]);
 
-  // Debounced search for dynamic suggestions
+  // Optimized Search for Locality
   useEffect(() => {
-    const fetchSuggestions = async () => {
-      if (locality.length >= 3) {
-        setIsLoadingSuggestions(true);
-        // Fallback to static filter first for immediate feedback
-        const staticMatches: PlaceSuggestion[] = DUBAI_LOCALITIES
-          .filter(l => l.toLowerCase().includes(locality.toLowerCase()))
-          .map(l => ({ name: l }));
-          
-        setFilteredLocalities(staticMatches);
-        
-        // Then fetch AI suggestions
-        try {
-          const aiSuggestions = await getPlaceSuggestions(locality);
-          if (aiSuggestions.length > 0) {
-            // Merge maps suggestions with static ones, preferring maps (for coords)
-            const mapMap = new Map<string, PlaceSuggestion>();
-            
-            // Add static first
-            staticMatches.forEach(s => mapMap.set(s.name, s));
-            
-            // Overwrite/Add AI suggestions
-            aiSuggestions.forEach(s => mapMap.set(s.name, s));
-            
-            setFilteredLocalities(Array.from(mapMap.values()).slice(0, 8));
-          }
-        } catch (err) {
-          // Keep static matches if AI fails
-        } finally {
-          setIsLoadingSuggestions(false);
-        }
-      } else {
-        const staticMatches: PlaceSuggestion[] = DUBAI_LOCALITIES
-          .filter(l => l.toLowerCase().includes(locality.toLowerCase()))
-          .map(l => ({ name: l }));
-        setFilteredLocalities(staticMatches);
-      }
-    };
+    if (!locality) {
+        setFilteredLocalities([]);
+        return;
+    }
 
-    const debounceTimer = setTimeout(fetchSuggestions, 600);
-    return () => clearTimeout(debounceTimer);
+    // 1. Instant Search from Staged Data (Fastest)
+    const stagedMatches: PlaceSuggestion[] = REAL_DUBAI_LOCATIONS
+      .filter(l => l.name.toLowerCase().includes(locality.toLowerCase()))
+      .map(l => ({ name: l.name, coordinates: { lat: l.lat, lng: l.lng } }));
+    
+    // Update UI immediately
+    setFilteredLocalities(stagedMatches.slice(0, 8));
+
+    // 2. Fallback to AI only if no staged matches and string is long enough
+    // This reduces API calls significantly for common queries
+    if (stagedMatches.length === 0 && locality.length >= 4) {
+        const debounceTimer = setTimeout(async () => {
+            setIsLoadingSuggestions(true);
+            try {
+                const aiSuggestions = await getPlaceSuggestions(locality);
+                setFilteredLocalities(prev => {
+                    // avoid overwriting if user typed more
+                    if (locality.length < 4) return prev; 
+                    return aiSuggestions.slice(0, 5);
+                });
+            } catch (err) {
+                console.warn("AI search failed", err);
+            } finally {
+                setIsLoadingSuggestions(false);
+            }
+        }, 800); // Higher debounce for API to prioritize local data
+        return () => clearTimeout(debounceTimer);
+    }
   }, [locality]);
 
   const handleLocalityChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -96,6 +113,10 @@ const RequestForm: React.FC<RequestFormProps> = ({ onSubmit, onCancel, initialCa
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!category.trim() || !title.trim() || !locality.trim() || !description.trim()) {
+       return; 
+    }
+
     setIsSubmitting(true);
     // Simulate API delay
     setTimeout(() => {
@@ -110,6 +131,10 @@ const RequestForm: React.FC<RequestFormProps> = ({ onSubmit, onCancel, initialCa
       setIsSubmitting(false);
     }, 1000);
   };
+
+  const filteredServices = availableServiceTypes.filter(s => 
+    s.name.toLowerCase().includes(category.toLowerCase())
+  );
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-[80] backdrop-blur-sm animate-in fade-in duration-200">
@@ -132,24 +157,48 @@ const RequestForm: React.FC<RequestFormProps> = ({ onSubmit, onCancel, initialCa
         </div>
         
         <form onSubmit={handleSubmit} className="p-6 space-y-6 overflow-y-auto">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Service Category</label>
-            <div className="grid grid-cols-3 gap-3">
-              {Object.values(ServiceCategory).map((cat) => (
-                <button
-                  key={cat}
-                  type="button"
-                  onClick={() => setCategory(cat)}
-                  className={`px-3 py-2 text-sm rounded-lg border text-center transition-all ${
-                    category === cat
-                      ? 'bg-dubai-gold text-white border-dubai-gold shadow-md'
-                      : 'bg-white text-gray-600 border-gray-200 hover:border-dubai-gold'
-                  }`}
-                >
-                  {cat}
-                </button>
-              ))}
+          
+          {/* Service Category - Searchable Dropdown */}
+          <div className="relative" ref={categoryWrapperRef}>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Service Category</label>
+            <div className="relative">
+                <input
+                  type="text"
+                  required
+                  value={category}
+                  onChange={(e) => {
+                    setCategory(e.target.value);
+                    setShowCategorySuggestions(true);
+                  }}
+                  onFocus={() => setShowCategorySuggestions(true)}
+                  placeholder="Select or search category..."
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-dubai-gold focus:border-transparent outline-none bg-white pr-10 cursor-pointer"
+                  autoComplete="off"
+                />
+                <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none text-gray-400">
+                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                </div>
             </div>
+            
+            {showCategorySuggestions && (
+                <ul className="absolute z-10 w-full bg-white shadow-xl max-h-60 rounded-lg py-1 text-base ring-1 ring-black ring-opacity-5 overflow-auto focus:outline-none sm:text-sm mt-1 border border-gray-100 animate-in fade-in slide-in-from-top-1">
+                  {filteredServices.length > 0 ? filteredServices.map((type) => (
+                    <li
+                      key={type.id}
+                      onClick={() => {
+                        setCategory(type.name);
+                        setShowCategorySuggestions(false);
+                      }}
+                      className="cursor-pointer select-none relative py-2.5 pl-4 pr-4 hover:bg-gray-50 text-gray-900 border-b border-gray-50 last:border-0"
+                    >
+                      <span className="block truncate font-medium">{type.name}</span>
+                      {type.description && <span className="block text-xs text-gray-500 truncate mt-0.5">{type.description}</span>}
+                    </li>
+                  )) : (
+                    <li className="px-4 py-3 text-gray-500 italic text-sm text-center">No matching categories found.</li>
+                  )}
+                </ul>
+            )}
           </div>
 
           <div>
@@ -169,28 +218,18 @@ const RequestForm: React.FC<RequestFormProps> = ({ onSubmit, onCancel, initialCa
             <div className="relative" ref={wrapperRef}>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  {selectedCoordinates ? (
-                     <svg className="h-5 w-5 text-green-500" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" /></svg>
-                  ) : (
-                     <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                     </svg>
-                  )}
+                  {/* Pin Icon matches screenshot */}
+                  <svg className={`h-5 w-5 ${selectedCoordinates ? 'text-green-500' : 'text-gray-400'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
                 </div>
                 <input
                   type="text"
                   required
                   value={locality}
                   onChange={handleLocalityChange}
-                  onFocus={() => {
-                     // Initial suggestions from static list
-                     const staticMatches = DUBAI_LOCALITIES
-                        .filter(l => l.toLowerCase().includes(locality.toLowerCase()))
-                        .map(l => ({ name: l }));
-                     setFilteredLocalities(staticMatches.slice(0, 8));
-                     setShowSuggestions(true);
-                  }}
+                  onFocus={() => setShowSuggestions(true)}
                   placeholder="Search area (e.g. Business Bay)"
                   className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-dubai-gold focus:border-transparent outline-none bg-white text-gray-700 placeholder-gray-400"
                   autoComplete="off"
@@ -206,7 +245,7 @@ const RequestForm: React.FC<RequestFormProps> = ({ onSubmit, onCancel, initialCa
               </div>
               
               {showSuggestions && filteredLocalities.length > 0 && (
-                <ul className="absolute z-10 w-full bg-white shadow-xl max-h-60 rounded-md py-1 text-base ring-1 ring-black ring-opacity-5 overflow-auto focus:outline-none sm:text-sm mt-1 border border-gray-100">
+                <ul className="absolute z-10 w-full bg-white shadow-xl max-h-60 rounded-md py-1 text-base ring-1 ring-black ring-opacity-5 overflow-auto focus:outline-none sm:text-sm mt-1 border border-gray-100 animate-in fade-in slide-in-from-top-1">
                   {filteredLocalities.map((loc, idx) => (
                     <li
                       key={`${loc.name}-${idx}`}

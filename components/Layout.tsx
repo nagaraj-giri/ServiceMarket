@@ -262,6 +262,7 @@ const Layout: React.FC<LayoutProps> = ({ children, user, currentPage, setCurrent
                    <SidebarLink isAdminLink adminSectionKey="users" label="Users & Roles" icon={<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>} />
                    <SidebarLink isAdminLink adminSectionKey="requests" label="Leads & Requests" icon={<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" /></svg>} />
                    <SidebarLink isAdminLink adminSectionKey="services" label="Service Types" icon={<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" /></svg>} />
+                   <SidebarLink isAdminLink adminSectionKey="ai-insights" label="AI Insights" icon={<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.384-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" /></svg>} />
                    <SidebarLink isAdminLink adminSectionKey="reviews" label="Reviews & Trust" icon={<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" /></svg>} />
                    <SidebarLink isAdminLink adminSectionKey="settings" label="Site Settings" icon={<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>} />
                    <SidebarLink isAdminLink adminSectionKey="security" label="Security & Comms" icon={<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>} />
@@ -336,17 +337,16 @@ const Layout: React.FC<LayoutProps> = ({ children, user, currentPage, setCurrent
           MOBILE TOP NAVIGATION (Hidden on Desktop)
       ================================================================================= */}
       <nav className="md:hidden sticky top-0 z-40 bg-white border-b border-gray-200 shadow-sm h-16 w-full">
+        {/* ... Mobile Nav Content ... */}
+        {/* Simplified for brevity as modifications were mostly desktop sidebar */}
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-full">
           <div className="flex justify-between items-center h-full">
-            {/* Logo */}
             <div className="flex items-center cursor-pointer" onClick={() => setCurrentPage('home')}>
               <div className="w-8 h-8 bg-dubai-gold rounded-lg mr-2 flex items-center justify-center text-white font-bold">
                 {siteName.charAt(0)}
               </div>
               <span className="text-xl font-bold text-dubai-dark tracking-tight">{siteName}</span>
             </div>
-
-            {/* Right Side Actions (Mobile) */}
             <div className="flex items-center space-x-2">
               {user && (
                 <div className="relative">
@@ -359,8 +359,6 @@ const Layout: React.FC<LayoutProps> = ({ children, user, currentPage, setCurrent
                       <span className="absolute top-1.5 right-1.5 block h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-white"></span>
                     )}
                   </button>
-
-                  {/* Mobile Notifications Dropdown */}
                   {showNotifMenu && (
                        <>
                          <div className="fixed inset-0 z-10" onClick={() => setShowNotifMenu(false)}></div>
@@ -406,15 +404,15 @@ const Layout: React.FC<LayoutProps> = ({ children, user, currentPage, setCurrent
         </div>
       </nav>
 
-      {/* Main Content Area - Shifted Right on Desktop */}
+      {/* Main Content Area */}
       <div className={`flex-1 flex flex-col transition-all duration-300 ease-in-out md:pt-16 ${isSidebarCollapsed ? 'md:pl-0' : 'md:pl-64'}`}>
         <main className="flex-grow pb-32 md:pb-0">
           {children}
         </main>
-
-        {/* Footer (Desktop Only) */}
+        
+        {/* Footer hidden on mobile */}
         <footer className="hidden md:block bg-dubai-dark text-white py-12">
-          {/* ... (Footer content same as before) */}
+          {/* ... footer content ... */}
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
               <div>
@@ -450,16 +448,13 @@ const Layout: React.FC<LayoutProps> = ({ children, user, currentPage, setCurrent
       {/* Mobile Bottom Navigation (Sticky Footer) */}
       <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-50 pb-safe shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
         <div className="grid grid-cols-5 items-center px-1 h-[70px]">
-        
-        {/* 1. Home */}
+        {/* ... mobile tabs ... */}
         <MobileTab 
           label="Home" 
           active={currentPage === 'home' || currentPage === 'dashboard'} 
           onClick={() => { setCurrentPage('home'); setIsMobileMenuOpen(false); }}
           icon={<svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>}
         />
-
-        {/* 2. Messages */}
         <MobileTab 
             label="Messages" 
             active={currentPage === 'messages'} 
@@ -470,8 +465,6 @@ const Layout: React.FC<LayoutProps> = ({ children, user, currentPage, setCurrent
             }}
             icon={<svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" /></svg>}
         />
-
-        {/* 3. FAB Placeholder & Button */}
         <div className="relative h-full flex items-center justify-center">
              <button
                 onClick={() => {
@@ -484,16 +477,12 @@ const Layout: React.FC<LayoutProps> = ({ children, user, currentPage, setCurrent
              </button>
              <span className="absolute bottom-2 text-[10px] font-medium text-gray-400 pointer-events-none">Post</span>
         </div>
-
-        {/* 4. AI Guide */}
         <MobileTab 
           label="AI Guide" 
           active={false}
           onClick={() => { if(onToggleAi) onToggleAi(); setIsMobileMenuOpen(false); }}
           icon={<svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>}
         />
-
-        {/* 5. Profile */}
         <MobileTab 
           label="Profile" 
           active={isMobileMenuOpen} 

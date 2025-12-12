@@ -1,13 +1,15 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { getDubaiInsights } from '../services/geminiService';
-import { ChatMessage } from '../types';
+import { ChatMessage, User } from '../types';
+import { api } from '../services/api';
 
 interface AiAssistantProps {
   onClose?: () => void;
+  currentUser: User | null;
 }
 
-const AiAssistant: React.FC<AiAssistantProps> = ({ onClose }) => {
+const AiAssistant: React.FC<AiAssistantProps> = ({ onClose, currentUser }) => {
   const [query, setQuery] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -42,6 +44,13 @@ const AiAssistant: React.FC<AiAssistantProps> = ({ onClose }) => {
     setMessages(prev => [...prev, userMsg]);
     setQuery('');
     setIsLoading(true);
+
+    // Log the query for both Authenticated and Guest users
+    const userId = currentUser?.id || `guest_${Date.now()}`; // Generate simple session-like ID for guests
+    const userName = currentUser?.name || 'Guest User';
+    
+    // We fire and forget the log to not block the UI
+    api.logAiQuery(userId, userName, userMsg.content).catch(err => console.warn("Logging failed", err));
 
     const { text, groundingChunks } = await getDubaiInsights(userMsg.content);
 

@@ -1,7 +1,9 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { UserRole, DirectMessage } from '../types';
 import { api } from '../services/api';
 import { ToastType } from './Toast';
+import { Skeleton } from './Skeleton';
 
 interface DirectMessageModalProps {
   recipientName: string;
@@ -14,23 +16,27 @@ interface DirectMessageModalProps {
 const DirectMessageModal: React.FC<DirectMessageModalProps> = ({ recipientName, recipientId, currentUser, onClose, showToast }) => {
   const [messages, setMessages] = useState<DirectMessage[]>([]);
   const [inputText, setInputText] = useState('');
+  const [isLoading, setIsLoading] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const fetchMessages = async () => {
+  const fetchMessages = async (isPolling = false) => {
     if (!currentUser) return;
     try {
+      if (!isPolling) setIsLoading(true);
       const msgs = await api.getMessages(currentUser.id, recipientId);
       setMessages(msgs);
     } catch (e) {
       console.error("Failed to fetch messages");
+    } finally {
+      if (!isPolling) setIsLoading(false);
     }
   };
 
   useEffect(() => {
     fetchMessages();
     // Poll for new messages every 2 seconds
-    pollingRef.current = setInterval(fetchMessages, 2000);
+    pollingRef.current = setInterval(() => fetchMessages(true), 2000);
 
     return () => {
       if (pollingRef.current) clearInterval(pollingRef.current);
@@ -41,7 +47,7 @@ const DirectMessageModal: React.FC<DirectMessageModalProps> = ({ recipientName, 
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
-  useEffect(scrollToBottom, [messages]);
+  useEffect(scrollToBottom, [messages, isLoading]);
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -50,7 +56,7 @@ const DirectMessageModal: React.FC<DirectMessageModalProps> = ({ recipientName, 
     try {
       await api.sendMessage(currentUser.id, recipientId, inputText);
       setInputText('');
-      fetchMessages(); // Refresh immediately
+      fetchMessages(true); // Refresh immediately
     } catch (err) {
       console.error("Failed to send message", err);
       if (showToast) showToast('Failed to send message. Please try again.', 'error');
@@ -87,25 +93,38 @@ const DirectMessageModal: React.FC<DirectMessageModalProps> = ({ recipientName, 
 
         {/* Chat Area */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
-           {messages.length === 0 && (
+           {isLoading && messages.length === 0 ? (
+             <div className="space-y-4">
+                <div className="flex justify-start">
+                   <Skeleton className="h-10 w-2/3 rounded-2xl rounded-tl-sm" />
+                </div>
+                <div className="flex justify-end">
+                   <Skeleton className="h-16 w-3/4 rounded-2xl rounded-tr-sm" />
+                </div>
+                <div className="flex justify-start">
+                   <Skeleton className="h-8 w-1/2 rounded-2xl rounded-tl-sm" />
+                </div>
+             </div>
+           ) : messages.length === 0 ? (
              <div className="text-center text-xs text-gray-400 my-10">
                <p>Start a conversation with {recipientName}</p>
              </div>
+           ) : (
+             messages.map((msg) => {
+                const isMe = msg.senderId === currentUser.id;
+                return (
+                  <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`max-w-[85%] px-4 py-2.5 shadow-sm text-sm ${
+                      isMe
+                        ? 'bg-dubai-blue text-white rounded-2xl rounded-tr-sm' 
+                        : 'bg-white text-gray-800 border border-gray-100 rounded-2xl rounded-tl-sm'
+                    }`}>
+                      {msg.content}
+                    </div>
+                  </div>
+                );
+             })
            )}
-          {messages.map((msg) => {
-            const isMe = msg.senderId === currentUser.id;
-            return (
-              <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[85%] px-4 py-2.5 shadow-sm text-sm ${
-                  isMe
-                    ? 'bg-dubai-blue text-white rounded-2xl rounded-tr-sm' 
-                    : 'bg-white text-gray-800 border border-gray-100 rounded-2xl rounded-tl-sm'
-                }`}>
-                  {msg.content}
-                </div>
-              </div>
-            );
-          })}
           <div ref={messagesEndRef} />
         </div>
 

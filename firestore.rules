@@ -1,0 +1,92 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // --- Helper Functions ---
+    
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+    
+    // Fetch the current user's profile to check roles
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    
+    function hasRole(role) {
+      return isSignedIn() && getUserData().role == role;
+    }
+    
+    function isAdmin() {
+      return hasRole('ADMIN');
+    }
+
+    // --- Collection Rules ---
+
+    // Users: Public read (needed for profiles/chat), Owner write, Admin write
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isOwner(userId);
+      allow update: if isOwner(userId) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Providers: Public read, Owner/Admin write
+    match /providers/{providerId} {
+      allow read: if true;
+      allow create: if isSignedIn() && isOwner(providerId);
+      allow update: if isOwner(providerId) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Service Requests
+    match /requests/{requestId} {
+      // Anyone signed in can create
+      allow create: if isSignedIn();
+      
+      // Read: Owner, Admin, or Providers (to see leads)
+      allow read: if isSignedIn(); 
+      
+      // Update: Owner (edit details), Admin, or Providers (submit quotes logic handles this via client)
+      allow update: if isSignedIn();
+      
+      // Delete: Owner or Admin
+      allow delete: if isAdmin() || (isSignedIn() && isOwner(resource.data.userId));
+    }
+
+    // Messages: Only sender and recipient can read/write
+    match /messages/{messageId} {
+      allow read: if isSignedIn() && (request.auth.uid == resource.data.senderId || request.auth.uid == resource.data.recipientId);
+      allow create: if isSignedIn() && request.auth.uid == request.resource.data.senderId;
+    }
+
+    // Notifications: User can read their own. Anyone can create (to notify others).
+    match /notifications/{notificationId} {
+      allow read: if isSignedIn() && isOwner(resource.data.userId);
+      allow create: if isSignedIn(); 
+      allow update: if isSignedIn() && isOwner(resource.data.userId); // To mark as read
+    }
+
+    // Service Types: Public read, Admin write
+    match /service_types/{typeId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Global Settings: Public read, Admin write
+    match /settings/{document=**} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Audit Logs: Admin read, Authenticated write (logging actions)
+    match /audit_logs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isSignedIn();
+    }
+  }
+}

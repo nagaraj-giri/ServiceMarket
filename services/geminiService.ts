@@ -43,7 +43,7 @@ export const getPlaceSuggestions = async (query: string): Promise<PlaceSuggestio
   try {
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
-      contents: `Find 5 distinct real places, districts, or landmarks in Dubai that match the search term "${query}". Use Google Maps data to verify their existence and location. Return ONLY a raw JSON array of objects with the following structure: [{ "name": "Place Name", "lat": 25.123, "lng": 55.123 }]. Do not include markdown formatting or explanations.`,
+      contents: `Search for places in Dubai that match: "${query}". Use the Google Maps tool to find real locations and their coordinates. Return ONLY a JSON array of up to 5 objects: [{ "name": "Official Name", "lat": 12.34, "lng": 56.78 }]. Ensure coordinates are accurate from the tool.`,
       config: {
         tools: [{ googleMaps: {} }],
         // responseMimeType: 'application/json' is unsupported with googleMaps tool in some contexts, so we parse text manually

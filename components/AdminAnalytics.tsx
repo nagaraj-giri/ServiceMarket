@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { 
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend, 
   AreaChart, Area, PieChart, Pie, Cell
@@ -17,6 +17,10 @@ const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d'
 const AdminAnalytics: React.FC<AdminAnalyticsProps> = ({ requests, providers, users }) => {
   const [activeTab, setActiveTab] = useState<AnalyticsTab>('users');
 
+  // --- FILTER OUT ADMINS ---
+  // Analytics should strictly reflect Customers and Providers
+  const analyticsUsers = useMemo(() => users.filter(u => u.role !== UserRole.ADMIN), [users]);
+
   // --- HELPER COMPONENTS ---
   const KpiCard = ({ title, value, subtext, trend, icon, color = 'bg-dubai-gold' }: any) => (
     <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 flex flex-col justify-between h-full hover:shadow-md transition-shadow">
@@ -31,8 +35,8 @@ const AdminAnalytics: React.FC<AdminAnalyticsProps> = ({ requests, providers, us
       </div>
       <div className="mt-4 flex items-center text-xs">
         {trend !== undefined && (
-          <span className={`font-bold mr-1 ${trend > 0 ? 'text-green-600' : 'text-red-500'}`}>
-            {trend > 0 ? '+' : ''}{trend}%
+          <span className={`font-bold mr-1 ${trend > 0 ? 'text-green-600' : (trend < 0 ? 'text-red-500' : 'text-gray-500')}`}>
+            {trend > 0 ? '▲' : (trend < 0 ? '▼' : '')} {Math.abs(trend)}%
           </span>
         )}
         <span className="text-gray-400">{subtext}</span>
@@ -47,39 +51,129 @@ const AdminAnalytics: React.FC<AdminAnalyticsProps> = ({ requests, providers, us
     </div>
   );
 
-  // --- MOCK DATA GENERATORS (Since we have limited real data history) ---
-  const generateTimeData = (days = 7, metric = 'value') => {
-    return Array.from({ length: days }).map((_, i) => ({
-      name: new Date(Date.now() - (days - 1 - i) * 86400000).toLocaleDateString('en-US', { weekday: 'short' }),
-      [metric]: Math.floor(Math.random() * 20) + 5,
-      secondary: Math.floor(Math.random() * 10) + 2
-    }));
-  };
+  // --- REAL-TIME DATA CALCULATIONS ---
 
-  const timeData = generateTimeData(7, 'count');
+  // 1. User Growth Data (Last 7 Days) - Using filtered analyticsUsers
+  const userGrowthData = useMemo(() => {
+    const days = Array.from({ length: 7 }).map((_, i) => {
+      const d = new Date();
+      d.setDate(d.getDate() - (6 - i));
+      return {
+        dateStr: d.toISOString().split('T')[0],
+        display: d.toLocaleDateString('en-US', { weekday: 'short' })
+      };
+    });
+
+    return days.map(day => {
+      const count = analyticsUsers.filter(u => {
+        if (!u.joinDate) return false;
+        // Assuming joinDate is ISO string
+        return u.joinDate.startsWith(day.dateStr);
+      }).length;
+      return {
+        name: day.display,
+        count
+      };
+    });
+  }, [analyticsUsers]);
+
+  // 2. User KPIs - Using filtered analyticsUsers
+  const userStats = useMemo(() => {
+    const totalUsers = analyticsUsers.length;
+    const todayStr = new Date().toISOString().split('T')[0];
+    const newUsersToday = analyticsUsers.filter(u => u.joinDate && u.joinDate.startsWith(todayStr)).length;
+    
+    // Active Users: Users with requests in last 30 days OR Providers with quotes in last 30 days.
+    const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    
+    const activeRequestUsers = new Set(
+        requests.filter(r => new Date(r.createdAt).getTime() > thirtyDaysAgo).map(r => r.userId)
+    );
+    
+    const activeProviderUsers = new Set();
+    requests.forEach(r => {
+        r.quotes.forEach(q => {
+            if (providers.some(p => p.id === q.providerId)) {
+                 activeProviderUsers.add(q.providerId);
+            }
+        })
+    });
+
+    // Ensure we don't count admins if they accidentally made requests
+    let activeCount = 0;
+    analyticsUsers.forEach(u => {
+        if (activeRequestUsers.has(u.id) || activeProviderUsers.has(u.id)) {
+            activeCount++;
+        }
+    });
+    
+    // Retention approximation: Users with > 1 request
+    const userRequestCounts = requests.reduce((acc, r) => {
+        // Only count if user is in our analytics list (not admin)
+        if (analyticsUsers.some(u => u.id === r.userId)) {
+            acc[r.userId] = (acc[r.userId] || 0) + 1;
+        }
+        return acc;
+    }, {} as Record<string, number>);
+    const returningUsers = Object.values(userRequestCounts).filter(c => c > 1).length;
+    const retentionRate = totalUsers > 0 ? Math.round((returningUsers / totalUsers) * 100) : 0;
+
+    return { totalUsers, newUsersToday, activeCount, retentionRate };
+  }, [analyticsUsers, requests, providers]);
+
+  // 3. User Segmentation - Using filtered analyticsUsers (Admins will be 0)
+  const roleData = useMemo(() => [
+    { name: 'Customers', value: analyticsUsers.filter(u => u.role === UserRole.USER).length },
+    { name: 'Providers', value: analyticsUsers.filter(u => u.role === UserRole.PROVIDER).length },
+  ].filter(d => d.value > 0), [analyticsUsers]);
+
+  // 4. Top Actions Data (This Week) - Filter out actions by Admins
+  const topActionsData = useMemo(() => {
+    const oneWeekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    
+    // Filter requests made by analyticsUsers
+    const newRequests = requests.filter(r => 
+        new Date(r.createdAt).getTime() > oneWeekAgo && 
+        analyticsUsers.some(u => u.id === r.userId)
+    ).length;
+    
+    let quotesCount = 0;
+    requests.forEach(r => {
+        if (new Date(r.createdAt).getTime() > oneWeekAgo) {
+            // Count quotes only from valid providers (in analyticsUsers)
+            const validQuotes = r.quotes.filter(q => analyticsUsers.some(u => u.id === q.providerId));
+            quotesCount += validQuotes.length; 
+        }
+    });
+
+    // Count Reviews
+    let reviewsCount = 0;
+    providers.forEach(p => {
+        p.reviews.forEach(r => {
+            if (new Date(r.date).getTime() > oneWeekAgo) reviewsCount++;
+        });
+    });
+
+    return [
+        { action: 'Created Request', count: newRequests, trend: 0 },
+        { action: 'Submitted Quote', count: quotesCount, trend: 0 },
+        { action: 'Posted Review', count: reviewsCount, trend: 0 },
+    ];
+  }, [requests, providers, analyticsUsers]);
+
 
   // --- 1. USER ANALYTICS RENDER ---
   const renderUserAnalytics = () => {
-    const totalUsers = users.length;
-    const newUsersToday = users.filter(u => new Date(u.joinDate || '').toDateString() === new Date().toDateString()).length;
-    const activeUsers = Math.floor(totalUsers * 0.8); // Mock active
-    
-    const roleData = [
-      { name: 'Customers', value: users.filter(u => u.role === UserRole.USER).length },
-      { name: 'Providers', value: users.filter(u => u.role === UserRole.PROVIDER).length },
-      { name: 'Admins', value: users.filter(u => u.role === UserRole.ADMIN).length },
-    ];
-
     return (
       <div className="space-y-6 animate-in fade-in duration-300">
-        <SectionHeader title="User Analytics" desc="Growth, segmentation, and engagement metrics." />
+        <SectionHeader title="User Analytics" desc="Real-time growth, segmentation, and engagement metrics (excluding Admins)." />
         
         {/* User KPIs */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <KpiCard title="Total Users" value={totalUsers} subtext="Total registered" trend={12} icon="👥" color="bg-blue-500" />
-          <KpiCard title="New Users" value={newUsersToday + 2} subtext="Today" trend={5} icon="🆕" color="bg-green-500" />
-          <KpiCard title="Active Users" value={activeUsers} subtext="Last 30 days" trend={2} icon="⚡" color="bg-purple-500" />
-          <KpiCard title="Retention" value="85%" subtext="Returning > 7 days" trend={-1} icon="🔄" color="bg-orange-500" />
+          <KpiCard title="Total Users" value={userStats.totalUsers} subtext="Total registered" trend={0} icon="3" color="bg-blue-500" />
+          <KpiCard title="New Users" value={userStats.newUsersToday} subtext="Today" trend={0} icon="🆕" color="bg-green-500" />
+          <KpiCard title="Active Users (30d)" value={userStats.activeCount} subtext="Recent Activity" trend={0} icon="⚡" color="bg-purple-500" />
+          <KpiCard title="Retention" value={`${userStats.retentionRate}%`} subtext=">1 Request" trend={0} icon="🔄" color="bg-orange-500" />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -88,7 +182,7 @@ const AdminAnalytics: React.FC<AdminAnalyticsProps> = ({ requests, providers, us
             <h3 className="font-bold text-gray-900 mb-4">User Growth (Last 7 Days)</h3>
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={timeData}>
+                <AreaChart data={userGrowthData}>
                   <defs>
                     <linearGradient id="colorUsers" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.8}/>
@@ -97,7 +191,7 @@ const AdminAnalytics: React.FC<AdminAnalyticsProps> = ({ requests, providers, us
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="name" axisLine={false} tickLine={false} />
-                  <YAxis axisLine={false} tickLine={false} />
+                  <YAxis axisLine={false} tickLine={false} allowDecimals={false} />
                   <Tooltip />
                   <Area type="monotone" dataKey="count" stroke="#3B82F6" fillOpacity={1} fill="url(#colorUsers)" />
                 </AreaChart>
@@ -134,19 +228,23 @@ const AdminAnalytics: React.FC<AdminAnalyticsProps> = ({ requests, providers, us
 
         {/* Top Activity Table */}
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-           <div className="p-6 border-b border-gray-100"><h3 className="font-bold">Top Actions Performed</h3></div>
+           <div className="p-6 border-b border-gray-100"><h3 className="font-bold text-gray-900">Top Actions (This Week)</h3></div>
            <table className="w-full text-sm text-left">
              <thead className="bg-gray-50 text-gray-500">
                <tr>
                  <th className="px-6 py-3">Action Name</th>
-                 <th className="px-6 py-3">Count (This Week)</th>
-                 <th className="px-6 py-3">Trend</th>
+                 <th className="px-6 py-3">Count</th>
+                 <th className="px-6 py-3">Status</th>
                </tr>
              </thead>
              <tbody className="divide-y divide-gray-100">
-                <tr><td className="px-6 py-3">Viewed Provider Profile</td><td className="px-6 py-3 font-bold">1,240</td><td className="px-6 py-3 text-green-600">▲ 12%</td></tr>
-                <tr><td className="px-6 py-3">Created Request</td><td className="px-6 py-3 font-bold">85</td><td className="px-6 py-3 text-green-600">▲ 5%</td></tr>
-                <tr><td className="px-6 py-3">Sent Message</td><td className="px-6 py-3 font-bold">432</td><td className="px-6 py-3 text-red-500">▼ 2%</td></tr>
+                {topActionsData.map((row, i) => (
+                    <tr key={i}>
+                        <td className="px-6 py-3">{row.action}</td>
+                        <td className="px-6 py-3 font-bold">{row.count}</td>
+                        <td className="px-6 py-3 text-green-600">Active</td>
+                    </tr>
+                ))}
              </tbody>
            </table>
         </div>
@@ -156,24 +254,28 @@ const AdminAnalytics: React.FC<AdminAnalyticsProps> = ({ requests, providers, us
 
   // --- 2. LEADS ANALYTICS RENDER ---
   const renderLeadsAnalytics = () => {
-    const totalLeads = requests.length;
-    const openLeads = requests.filter(r => r.status === 'open').length;
-    const quoted = requests.filter(r => r.status === 'quoted').length;
-    const accepted = requests.filter(r => r.status === 'accepted' || r.status === 'closed').length;
+    // Leads are inherently user/provider interactions, so usually okay, 
+    // but ensures requests are from valid analyticsUsers.
+    const validRequests = requests.filter(r => analyticsUsers.some(u => u.id === r.userId));
+
+    const totalLeads = validRequests.length;
+    const quoted = validRequests.filter(r => r.status === 'quoted').length;
+    const accepted = validRequests.filter(r => r.status === 'accepted' || r.status === 'closed').length;
+    const completed = validRequests.filter(r => r.status === 'closed').length;
     
     const funnelData = [
       { name: 'Total Leads', value: totalLeads },
       { name: 'Quoted', value: quoted },
       { name: 'Accepted', value: accepted },
-      { name: 'Completed', value: requests.filter(r => r.status === 'closed').length },
+      { name: 'Completed', value: completed },
     ];
 
-    const categoryData = Object.entries(requests.reduce((acc: any, r) => {
+    const categoryData = Object.entries(validRequests.reduce((acc: any, r) => {
       acc[r.category] = (acc[r.category] || 0) + 1;
       return acc;
     }, {})).map(([name, value]) => ({ name, value }));
 
-    const staleLeads = requests.filter(r => r.status === 'open' && (Date.now() - new Date(r.createdAt).getTime() > 86400000));
+    const staleLeads = validRequests.filter(r => r.status === 'open' && (Date.now() - new Date(r.createdAt).getTime() > 86400000));
 
     return (
       <div className="space-y-6 animate-in fade-in duration-300">
@@ -181,10 +283,10 @@ const AdminAnalytics: React.FC<AdminAnalyticsProps> = ({ requests, providers, us
 
         {/* Lead KPIs */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <KpiCard title="Total Volume" value={totalLeads} subtext="Lifetime" trend={8} icon="📥" color="bg-gray-800" />
-          <KpiCard title="Lead → Quote" value={`${totalLeads ? Math.round((quoted/totalLeads)*100) : 0}%`} subtext="Response Rate" trend={2} icon="💬" color="bg-blue-600" />
-          <KpiCard title="Conversion" value={`${quoted ? Math.round((accepted/quoted)*100) : 0}%`} subtext="Quote → Accept" trend={-5} icon="✅" color="bg-green-600" />
-          <KpiCard title="Avg Time to Quote" value="3.5h" subtext="Speed" trend={10} icon="⏱️" color="bg-yellow-500" />
+          <KpiCard title="Total Volume" value={totalLeads} subtext="Lifetime" trend={0} icon="📥" color="bg-gray-800" />
+          <KpiCard title="Lead → Quote" value={`${totalLeads ? Math.round((quoted/totalLeads)*100) : 0}%`} subtext="Response Rate" trend={0} icon="💬" color="bg-blue-600" />
+          <KpiCard title="Conversion" value={`${quoted ? Math.round((accepted/quoted)*100) : 0}%`} subtext="Quote → Accept" trend={0} icon="✅" color="bg-green-600" />
+          <KpiCard title="Closed Deals" value={completed} subtext="Success" trend={0} icon="🏁" color="bg-yellow-500" />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -195,8 +297,8 @@ const AdminAnalytics: React.FC<AdminAnalyticsProps> = ({ requests, providers, us
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={funnelData} layout="vertical" margin={{ left: 40 }}>
                     <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} />
-                    <XAxis type="number" />
-                    <YAxis dataKey="name" type="category" />
+                    <XAxis type="number" allowDecimals={false} />
+                    <YAxis dataKey="name" type="category" width={100} />
                     <Tooltip cursor={{fill: 'transparent'}} />
                     <Bar dataKey="value" fill="#C5A059" radius={[0, 4, 4, 0]} barSize={40} />
                   </BarChart>
@@ -258,23 +360,18 @@ const AdminAnalytics: React.FC<AdminAnalyticsProps> = ({ requests, providers, us
 
   // --- 3. PROVIDER ANALYTICS RENDER ---
   const renderProviderAnalytics = () => {
+    // Ensure we only look at non-admin providers (though ideally providers are never admins)
+    const validProviders = providers.filter(p => analyticsUsers.some(u => u.id === p.id));
+
     // Derived stats
-    const providerStats = providers.map(p => {
+    const providerStats = validProviders.map(p => {
         const quotesSent = requests.reduce((acc, r) => acc + (r.quotes.some(q => q.providerId === p.id) ? 1 : 0), 0);
         const wins = requests.reduce((acc, r) => acc + (r.quotes.some(q => q.providerId === p.id && q.status === 'accepted') ? 1 : 0), 0);
         return { ...p, quotesSent, wins, winRate: quotesSent > 0 ? Math.round((wins / quotesSent) * 100) : 0 };
     }).sort((a, b) => b.quotesSent - a.quotesSent);
 
     const activeProviders = providerStats.filter(p => p.quotesSent > 0).length;
-
-    // Mock Response Time Dist
-    const responseTimeData = [
-       { range: '< 1 hr', count: 12 },
-       { range: '1-4 hrs', count: 25 },
-       { range: '4-12 hrs', count: 18 },
-       { range: '12-24 hrs', count: 8 },
-       { range: '> 24 hrs', count: 4 },
-    ];
+    const avgWinRate = providerStats.length > 0 ? Math.round(providerStats.reduce((acc, p) => acc + p.winRate, 0) / providerStats.length) : 0;
 
     return (
       <div className="space-y-6 animate-in fade-in duration-300">
@@ -282,152 +379,33 @@ const AdminAnalytics: React.FC<AdminAnalyticsProps> = ({ requests, providers, us
 
         {/* Provider KPIs */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <KpiCard title="Total Providers" value={providers.length} subtext="Onboarded" trend={2} icon="🏢" color="bg-indigo-600" />
-          <KpiCard title="Active (30d)" value={activeProviders} subtext={`${Math.round((activeProviders/providers.length)*100)}% Utilization`} trend={0} icon="⚡" color="bg-green-600" />
-          <KpiCard title="Avg Win Rate" value="18%" subtext="Marketplace Avg" trend={1} icon="🏆" color="bg-yellow-500" />
-          <KpiCard title="Disputes" value="2" subtext="Open Cases" trend={-1} icon="⚖️" color="bg-red-500" />
+          <KpiCard title="Total Providers" value={validProviders.length} subtext="Onboarded" trend={0} icon="🏢" color="bg-indigo-600" />
+          <KpiCard title="Active (30d)" value={activeProviders} subtext={`${validProviders.length > 0 ? Math.round((activeProviders/validProviders.length)*100) : 0}% Utilization`} trend={0} icon="⚡" color="bg-green-600" />
+          <KpiCard title="Avg Win Rate" value={`${avgWinRate}%`} subtext="Marketplace Avg" trend={0} icon="🏆" color="bg-yellow-500" />
+          <KpiCard title="Verified" value={validProviders.filter(p => p.isVerified).length} subtext="Trusted" trend={0} icon="🛡️" color="bg-blue-500" />
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-1 gap-6">
            {/* Top Providers Table */}
            <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
               <div className="p-4 border-b border-gray-100 bg-gray-50"><h3 className="font-bold text-gray-900">Top Performers</h3></div>
-              <table className="w-full text-sm text-left">
-                 <thead className="bg-gray-50 text-gray-500">
-                    <tr><th className="px-4 py-2">Provider</th><th className="px-4 py-2">Quotes</th><th className="px-4 py-2">Win %</th></tr>
-                 </thead>
-                 <tbody className="divide-y divide-gray-100">
-                    {providerStats.slice(0, 5).map(p => (
-                       <tr key={p.id}>
-                          <td className="px-4 py-3 font-medium">{p.name}</td>
-                          <td className="px-4 py-3">{p.quotesSent}</td>
-                          <td className="px-4 py-3 text-green-600 font-bold">{p.winRate}%</td>
-                       </tr>
-                    ))}
-                 </tbody>
-              </table>
-           </div>
-
-           {/* Response Time Chart */}
-           <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
-              <h3 className="font-bold text-gray-900 mb-4">Response Time Distribution</h3>
-              <div className="h-64">
-                 <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={responseTimeData}>
-                       <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                       <XAxis dataKey="range" tick={{fontSize: 10}} />
-                       <YAxis />
-                       <Tooltip cursor={{fill: 'transparent'}} />
-                       <Bar dataKey="count" fill="#8884d8" radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                 </ResponsiveContainer>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm text-left">
+                    <thead className="bg-gray-50 text-gray-500">
+                        <tr><th className="px-4 py-2">Provider</th><th className="px-4 py-2">Quotes</th><th className="px-4 py-2">Wins</th><th className="px-4 py-2">Win %</th></tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                        {providerStats.length > 0 ? providerStats.slice(0, 5).map(p => (
+                        <tr key={p.id}>
+                            <td className="px-4 py-3 font-medium">{p.name}</td>
+                            <td className="px-4 py-3">{p.quotesSent}</td>
+                            <td className="px-4 py-3">{p.wins}</td>
+                            <td className="px-4 py-3 text-green-600 font-bold">{p.winRate}%</td>
+                        </tr>
+                        )) : <tr><td colSpan={4} className="p-4 text-center text-gray-400">No provider activity yet.</td></tr>}
+                    </tbody>
+                </table>
               </div>
-           </div>
-        </div>
-      </div>
-    );
-  };
-
-  // --- 4. SITE ANALYTICS RENDER ---
-  const renderSiteAnalytics = () => {
-    // Mock Data
-    const trafficData = [
-       { name: 'Organic Search', value: 4500 },
-       { name: 'Direct', value: 2100 },
-       { name: 'Social', value: 1200 },
-       { name: 'Referral', value: 800 },
-    ];
-
-    const topPages = [
-       { page: '/home', visits: 12500, bounce: '45%' },
-       { page: '/services/golden-visa', visits: 4200, bounce: '32%' },
-       { page: '/dashboard', visits: 3800, bounce: '12%' },
-       { page: '/request/create', visits: 2100, bounce: '55%' },
-    ];
-
-    const searchTerms = [
-       { term: "freelance visa price", count: 420 },
-       { term: "business setup dubai south", count: 310 },
-       { term: "family sponsorship salary", count: 180 },
-       { term: "golden visa requirements", count: 150 },
-    ];
-
-    return (
-      <div className="space-y-6 animate-in fade-in duration-300">
-        <SectionHeader title="Site Analytics" desc="Traffic sources, content performance, and system health." />
-
-        {/* Site KPIs */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <KpiCard title="Total Sessions" value="24.5K" subtext="This Month" trend={15} icon="🌐" color="bg-blue-600" />
-          <KpiCard title="Avg Duration" value="4m 12s" subtext="Engagement" trend={3} icon="⏱️" color="bg-indigo-500" />
-          <KpiCard title="Bounce Rate" value="42%" subtext="Lower is better" trend={-2} icon="📉" color="bg-orange-500" />
-          <KpiCard title="API Uptime" value="99.9%" subtext="System Health" icon="🖥️" color="bg-green-600" />
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-           {/* Traffic Sources */}
-           <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
-              <h3 className="font-bold text-gray-900 mb-4">Traffic Sources</h3>
-              <div className="h-64">
-                 <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                       <Pie data={trafficData} innerRadius={60} outerRadius={80} paddingAngle={2} dataKey="value">
-                          {trafficData.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
-                       </Pie>
-                       <Tooltip />
-                       <Legend layout="vertical" verticalAlign="middle" align="right" />
-                    </PieChart>
-                 </ResponsiveContainer>
-              </div>
-           </div>
-
-           {/* Top Search Terms */}
-           <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-              <div className="p-4 border-b border-gray-100 bg-gray-50"><h3 className="font-bold text-gray-900">Top Internal Searches</h3></div>
-              <table className="w-full text-sm text-left">
-                 <thead className="bg-gray-50 text-gray-500">
-                    <tr><th className="px-4 py-2">Search Term</th><th className="px-4 py-2">Count</th></tr>
-                 </thead>
-                 <tbody className="divide-y divide-gray-100">
-                    {searchTerms.map((t, i) => (
-                       <tr key={i}>
-                          <td className="px-4 py-3 text-gray-700">"{t.term}"</td>
-                          <td className="px-4 py-3 font-medium">{t.count}</td>
-                       </tr>
-                    ))}
-                 </tbody>
-              </table>
-           </div>
-        </div>
-
-        {/* Top Pages Table */}
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-           <div className="p-6 border-b border-gray-100"><h3 className="font-bold text-gray-900">Most Visited Pages</h3></div>
-           <div className="overflow-x-auto">
-              <table className="w-full text-sm text-left">
-                 <thead className="bg-gray-50 text-gray-500">
-                    <tr>
-                       <th className="px-6 py-3">Page URL</th>
-                       <th className="px-6 py-3">Visits</th>
-                       <th className="px-6 py-3">Bounce Rate</th>
-                       <th className="px-6 py-3">Performance</th>
-                    </tr>
-                 </thead>
-                 <tbody className="divide-y divide-gray-100">
-                    {topPages.map((p, i) => (
-                       <tr key={i}>
-                          <td className="px-6 py-4 font-mono text-xs text-blue-600">{p.page}</td>
-                          <td className="px-6 py-4 font-bold">{p.visits.toLocaleString()}</td>
-                          <td className="px-6 py-4 text-gray-500">{p.bounce}</td>
-                          <td className="px-6 py-4">
-                             <div className="w-24 h-2 bg-gray-100 rounded-full overflow-hidden">
-                                <div className="h-full bg-green-500" style={{ width: `${Math.random() * 40 + 60}%` }}></div>
-                             </div>
-                          </td>
-                       </tr>
-                    ))}
-                 </tbody>
-              </table>
            </div>
         </div>
       </div>
@@ -439,7 +417,7 @@ const AdminAnalytics: React.FC<AdminAnalyticsProps> = ({ requests, providers, us
     <div>
       {/* Analytics Navigation Tabs */}
       <div className="flex space-x-1 bg-gray-100 p-1 rounded-xl mb-6 inline-flex">
-        {(['users', 'leads', 'providers', 'site'] as AnalyticsTab[]).map((tab) => (
+        {(['users', 'leads', 'providers'] as AnalyticsTab[]).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -459,7 +437,6 @@ const AdminAnalytics: React.FC<AdminAnalyticsProps> = ({ requests, providers, us
         {activeTab === 'users' && renderUserAnalytics()}
         {activeTab === 'leads' && renderLeadsAnalytics()}
         {activeTab === 'providers' && renderProviderAnalytics()}
-        {activeTab === 'site' && renderSiteAnalytics()}
       </div>
     </div>
   );
