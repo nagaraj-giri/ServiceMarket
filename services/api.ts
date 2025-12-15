@@ -216,14 +216,20 @@ export const api = {
 
   getRequests: async (user: User): Promise<ServiceRequest[]> => {
     let q;
+    // NOTE: Client-side filtering/sorting is used here to avoid creating multiple composite indexes
+    // for this demo. In a high-scale production app, specific indexes should be deployed.
     if (user.role === UserRole.USER) {
-      q = query(collection(db, "requests"), where("userId", "==", user.id), orderBy("createdAt", "desc"));
+      // Just filter by user, sort client side to avoid index (userId ASC, createdAt DESC) if missing
+      q = query(collection(db, "requests"), where("userId", "==", user.id));
     } else {
-      // Admins and Providers see all (filtering done on client or advanced queries)
-      q = query(collection(db, "requests"), orderBy("createdAt", "desc"));
+      // Admins and Providers see all
+      q = query(collection(db, "requests"));
     }
     const snapshot = await getDocs(q);
-    return snapshot.docs.map(d => ({ id: d.id, ...(d.data() as any) } as ServiceRequest));
+    const reqs = snapshot.docs.map(d => ({ id: d.id, ...(d.data() as any) } as ServiceRequest));
+    
+    // Sort descending by date
+    return reqs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   },
 
   createRequest: async (data: any): Promise<void> => {
@@ -431,9 +437,14 @@ export const api = {
   // --- NOTIFICATIONS ---
 
   getNotifications: async (userId: string): Promise<Notification[]> => {
-    const q = query(collection(db, "notifications"), where("userId", "==", userId), orderBy("timestamp", "desc"), limit(20));
+    // UPDATED: Removed orderBy from query to avoid missing composite index error.
+    // We now fetch by user and sort in memory.
+    const q = query(collection(db, "notifications"), where("userId", "==", userId));
     const snapshot = await getDocs(q);
-    return snapshot.docs.map(d => ({ id: d.id, ...(d.data() as any) } as Notification));
+    const notifs = snapshot.docs.map(d => ({ id: d.id, ...(d.data() as any) } as Notification));
+    
+    // Client-side sort descending by timestamp and limit to 20
+    return notifs.sort((a, b) => b.timestamp - a.timestamp).slice(0, 20);
   },
 
   markNotificationAsRead: async (id: string): Promise<void> => {
@@ -441,11 +452,24 @@ export const api = {
   },
 
   markAllNotificationsAsRead: async (userId: string): Promise<void> => {
-    const q = query(collection(db, "notifications"), where("userId", "==", userId), where("read", "==", false));
+    // UPDATED: Removed where("read", "==", false) from query to avoid potential index requirement 
+    // for compound query (userId + read). We fetch all for user and filter in JS.
+    const q = query(collection(db, "notifications"), where("userId", "==", userId));
     const snapshot = await getDocs(q);
+    
     const batch = writeBatch(db);
-    snapshot.docs.forEach(d => batch.update(d.ref, { read: true }));
-    await batch.commit();
+    let updateCount = 0;
+    
+    snapshot.docs.forEach(d => {
+        if (d.data().read === false) {
+            batch.update(d.ref, { read: true });
+            updateCount++;
+        }
+    });
+    
+    if (updateCount > 0) {
+        await batch.commit();
+    }
   },
 
   broadcastNotification: async (title: string, message: string): Promise<void> => {

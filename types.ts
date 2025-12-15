@@ -127,6 +127,12 @@ export interface ProviderProfile {
   coordinates?: Coordinates; // New: Geospatial data
   reviews: Review[];
   profileImage?: string;
+  coverImage?: string; // New: Banner image for storefront
+  gallery?: string[]; // New: Gallery images
+  website?: string;
+  phone?: string;
+  email?: string;
+  contactEmail?: string; // New: Public facing contact email
 }
 
 export interface Notification {

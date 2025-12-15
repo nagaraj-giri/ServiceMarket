@@ -5,10 +5,10 @@ export const API_DELAY = 1000;
 
 // Updated to match the design screenshot provided by the user
 export const DEFAULT_SERVICE_TYPES = [
+  { name: 'Business Setup Consultant', description: 'Expert guidance for company formation, trade licensing, PRO services, and compliance in the UAE.', isActive: true },
   { name: 'Visa Services', description: 'Assistance with tourist, family, employment, and visa renewal processes.', isActive: true },
   { name: 'Tours & Travels', description: 'Travel planning, tour packages, bookings, and local experiences.', isActive: true },
   { name: 'Car Lift', description: 'Daily or monthly car lift services for office and personal commuting.', isActive: true },
-  { name: 'Rent a Car', description: 'Short-term and long-term car rental options for personal and business use.', isActive: true },
   { name: 'Insurance Services', description: 'Health, vehicle, travel, and life insurance solutions tailored to your needs.', isActive: true },
   { name: 'Packers & Movers', description: 'Safe and reliable packing, moving, and relocation services within and outside the city.', isActive: true },
 ];

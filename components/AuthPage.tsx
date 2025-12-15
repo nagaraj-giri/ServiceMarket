@@ -1,11 +1,11 @@
 
 import React, { useState } from 'react';
-import { UserRole } from '../types';
+import { User, UserRole } from '../types';
 import { api } from '../services/api';
 import { ToastType } from './Toast';
 
 interface AuthPageProps {
-  onSuccess: () => void;
+  onSuccess: (user: User) => void;
   showToast?: (message: string, type: ToastType) => void;
 }
 
@@ -83,15 +83,15 @@ const AuthPage: React.FC<AuthPageProps> = ({ onSuccess, showToast }) => {
         if (showToast) showToast('Password reset email sent! Check your inbox.', 'success');
         setIsForgot(false); // Return to login
       } else if (isLogin) {
-        await api.login(email, password);
-        onSuccess();
+        const user = await api.login(email, password);
+        onSuccess(user);
       } else {
-        await api.register({
+        const user = await api.register({
           name,
           email,
           role,
         }, password);
-        onSuccess();
+        onSuccess(user);
         if (showToast) showToast('Verification email sent! Please check your inbox.', 'success');
       }
     } catch (err: any) {
@@ -115,8 +115,8 @@ const AuthPage: React.FC<AuthPageProps> = ({ onSuccess, showToast }) => {
     setErrorType(null);
     setIsLoading(true);
     try {
-      await api.loginWithGoogle();
-      onSuccess();
+      const user = await api.loginWithGoogle();
+      onSuccess(user);
       if (showToast) showToast('Signed in with Google successfully!', 'success');
     } catch (err: any) {
       const msg = getErrorMessage(err);

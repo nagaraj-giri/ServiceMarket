@@ -1,435 +1,361 @@
-
 import React, { useState, useEffect } from 'react';
+import { User, UserRole, ServiceRequest, ProviderProfile, Notification, Quote, SiteSettings, Conversation, AdminSection } from './types';
+import { api } from './services/api';
 import Layout from './components/Layout';
-import AuthPage from './components/AuthPage';
 import Dashboard from './components/Dashboard';
+import AuthPage from './components/AuthPage';
 import RequestForm from './components/RequestForm';
+import VerifyEmailPage from './components/VerifyEmailPage';
+import ProviderProfileView from './components/ProviderProfile'; // Import correctly
+import ProfileSettings from './components/ProfileSettings';
+import MessagesPage from './components/MessagesPage';
 import ProviderLeadsPage from './components/ProviderLeadsPage';
+import AdminDashboard from './components/AdminDashboard';
+import AiAssistant from './components/AiAssistant';
+import Toast, { ToastType } from './components/Toast';
+import DirectMessageModal from './components/DirectMessageModal';
 import SubmitQuoteModal from './components/SubmitQuoteModal';
 import QuoteAcceptanceModal from './components/QuoteAcceptanceModal';
-import ProfileSettings from './components/ProfileSettings';
 import QuoteDetailsModal from './components/QuoteDetailsModal';
-import AdminDashboard from './components/AdminDashboard';
-import VerifyEmailPage from './components/VerifyEmailPage';
-import Toast, { ToastType } from './components/Toast';
-import AiAssistant from './components/AiAssistant';
-import MessagesPage from './components/MessagesPage';
-import DirectMessageModal from './components/DirectMessageModal';
-import ProviderProfileView from './components/ProviderProfile';
-
-import { User, UserRole, ServiceRequest, ProviderProfile, Notification, Quote, ServiceType, ServiceCategory, Conversation, AdminSection, SiteSettings } from './types';
-import { api } from './services/api';
+import TrashPage from './components/TrashPage';
 
 const App: React.FC = () => {
-  // Authentication & User State
+  // --- STATE ---
   const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  // Navigation State
+  const [isLoading, setIsLoading] = useState(true);
   const [currentPage, setCurrentPage] = useState('home');
   const [adminSection, setAdminSection] = useState<AdminSection>('overview');
-
+  
   // Data State
   const [requests, setRequests] = useState<ServiceRequest[]>([]);
   const [providers, setProviders] = useState<ProviderProfile[]>([]);
-  const [adminUsers, setAdminUsers] = useState<User[]>([]);
-  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [users, setUsers] = useState<User[]>([]); // For admin
   const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [serviceTypes, setServiceTypes] = useState<ServiceType[]>([]);
-  const [siteSettings, setSiteSettings] = useState<SiteSettings>({
-    siteName: 'DubaiLink',
-    contactEmail: '',
-    maintenanceMode: false,
-    allowNewRegistrations: true,
-    heroTitle: 'Golden Visa AE',
-    heroSubtitle: 'Secure your 10-year residency today with expert guidance.',
-    heroButtonText: 'Post Request'
-  });
-
-  // UI State (Modals, Drawers)
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [siteSettings, setSiteSettings] = useState<SiteSettings | undefined>(undefined);
+  
+  // UI State
   const [showRequestForm, setShowRequestForm] = useState(false);
-  const [activeCategory, setActiveCategory] = useState<string | undefined>(undefined);
-  // Store pending request data for guests
-  const [pendingRequestData, setPendingRequestData] = useState<Omit<ServiceRequest, 'id' | 'quotes' | 'status' | 'createdAt'> | null>(null);
-  
-  const [showQuoteModal, setShowQuoteModal] = useState(false);
-  const [activeRequestForQuote, setActiveRequestForQuote] = useState<string | null>(null);
+  const [showAiAssistant, setShowAiAssistant] = useState(false);
+  const [toast, setToast] = useState<{message: string, type: ToastType, isVisible: boolean}>({
+    message: '', type: 'info', isVisible: false
+  });
+  const [pendingAction, setPendingAction] = useState<'post_request' | null>(null);
 
-  const [showAcceptModal, setShowAcceptModal] = useState(false);
-  const [activeQuoteForAcceptance, setActiveQuoteForAcceptance] = useState<{ quote: Quote, reqStatus: ServiceRequest['status'] } | null>(null);
-
-  const [showQuoteDetails, setShowQuoteDetails] = useState(false);
-  const [activeQuoteDetail, setActiveQuoteDetail] = useState<Quote | null>(null);
-
+  // Modal State
+  const [activeChatUser, setActiveChatUser] = useState<{id: string, name: string} | null>(null);
+  const [quotingRequestId, setQuotingRequestId] = useState<string | null>(null);
+  const [acceptingQuote, setAcceptingQuote] = useState<{quote: Quote, reqStatus: any} | null>(null);
+  const [viewingQuote, setViewingQuote] = useState<Quote | null>(null);
   const [viewingProviderId, setViewingProviderId] = useState<string | null>(null);
-  
-  const [chatUser, setChatUser] = useState<{id: string, name: string} | null>(null);
-  
-  const [toast, setToast] = useState<{ message: string, type: ToastType, isVisible: boolean }>({ message: '', type: 'info', isVisible: false });
-  const [showAi, setShowAi] = useState(false);
+  const [showTrash, setShowTrash] = useState(false);
 
-  // --- INITIALIZATION ---
+  // --- EFFECTS ---
+
+  // Auth Check
   useEffect(() => {
-    const init = async () => {
-      try {
-        const types = await api.getServiceTypes();
-        setServiceTypes(types);
-
-        const settings = await api.getSettings();
-        setSiteSettings(settings);
-
-        const currentUser = await api.getCurrentUser();
-        setUser(currentUser);
-        
-        if (currentUser) {
-           await loadUserData(currentUser);
-        }
-      } catch (e) {
-        console.error("Initialization failed", e);
-      } finally {
-        setLoading(false);
+    const initAuth = async () => {
+      const currentUser = await api.getCurrentUser();
+      setUser(currentUser);
+      setIsLoading(false);
+      
+      // Default to home or dashboard if logged in
+      if (currentUser) {
+        if (currentUser.role === UserRole.ADMIN) setCurrentPage('dashboard');
+        refreshData();
       }
     };
-    init();
+    initAuth();
   }, []);
 
-  // --- DATA LOADING ---
-  const loadUserData = async (currentUser: User) => {
-    // We run requests in parallel but catch errors independently so one failure (e.g. notifications index error)
-    // does not prevent the other data (e.g. requests) from loading.
-    
-    // 1. Conversations
-    api.getConversations(currentUser.id)
-      .then(setConversations)
-      .catch(e => console.error("Failed to load conversations:", e));
+  // Poll for updates (simplified for demo)
+  useEffect(() => {
+    if (!user) return;
+    const interval = setInterval(() => {
+       refreshData();
+    }, 10000); // 10s poll
+    return () => clearInterval(interval);
+  }, [user]);
 
-    // 2. Notifications
-    api.getNotifications(currentUser.id)
-      .then(setNotifications)
-      .catch(e => console.error("Failed to load notifications (Check indexes):", e));
+  // Load Settings
+  useEffect(() => {
+    api.getSettings().then(setSiteSettings);
+  }, []);
 
-    // 3. Requests & Role Specific Data
-    if (currentUser.role === UserRole.USER) {
-       await api.getRequests(currentUser)
-         .then(setRequests)
-         .catch(e => console.error("Failed to load requests:", e));
-    } else if (currentUser.role === UserRole.PROVIDER) {
-       // Load all requests (leads will be filtered in component)
-       api.getRequests({ role: UserRole.ADMIN } as User)
-         .then(setRequests)
-         .catch(e => console.error("Failed to load provider requests:", e));
-         
-       api.getProviders()
-         .then(setProviders) // Load all to find self
-         .catch(e => console.error("Failed to load providers:", e));
-    } else if (currentUser.role === UserRole.ADMIN) {
-       api.getRequests({ role: UserRole.ADMIN } as User)
-         .then(setRequests)
-         .catch(e => console.error("Failed to load admin requests:", e));
-       
-       api.getAllUsers()
-         .then(setAdminUsers)
-         .catch(e => console.error("Failed to load users:", e));
-       
-       api.getProviders()
-         .then(setProviders)
-         .catch(e => console.error("Failed to load providers:", e));
+  const refreshData = async () => {
+    if (!user) return;
+    try {
+      const [reqs, notifs, chats] = await Promise.all([
+        api.getRequests(user),
+        api.getNotifications(user.id),
+        api.getConversations(user.id)
+      ]);
+      setRequests(reqs);
+      setNotifications(notifs);
+      setConversations(chats);
+
+      if (user.role === UserRole.ADMIN || user.role === UserRole.USER) {
+        const provs = await api.getProviders();
+        setProviders(provs);
+      }
+      if (user.role === UserRole.ADMIN) {
+        const allUsers = await api.getAllUsers();
+        setUsers(allUsers);
+      } else if (user.role === UserRole.PROVIDER) {
+         // Provider needs self profile
+         const provs = await api.getProviders();
+         setProviders(provs);
+      }
+    } catch (e) {
+      console.error("Failed to refresh data", e);
     }
   };
 
   // --- ACTIONS ---
+
+  const showToastMessage = (message: string, type: ToastType) => {
+    setToast({ message, type, isVisible: true });
+  };
+
+  const handleLogin = async (loggedInUser: User) => {
+    setUser(loggedInUser);
+    
+    // Check for pending actions (e.g. user tried to post request before login)
+    if (pendingAction === 'post_request') {
+      setCurrentPage('dashboard');
+      // Adding a small delay ensures state updates propagate correctly before opening the modal
+      setTimeout(() => setShowRequestForm(true), 100);
+      setPendingAction(null);
+    } else {
+      setCurrentPage('dashboard');
+    }
+    
+    refreshData();
+  };
+
   const handleLogout = async () => {
     await api.logout();
     setUser(null);
     setCurrentPage('home');
     setRequests([]);
     setNotifications([]);
-    setConversations([]);
+    setPendingAction(null);
   };
 
-  const showToastMessage = (message: string, type: ToastType = 'info') => {
-    setToast({ message, type, isVisible: true });
-  };
-
-  const openRequestForm = (category?: string) => {
-     setActiveCategory(category);
-     setShowRequestForm(true);
-  };
-
-  const refreshData = async () => {
-    if (user) await loadUserData(user);
-    // Also refresh settings in case admin updated them
-    const settings = await api.getSettings();
-    setSiteSettings(settings);
-  };
-
-  const handleLoginSuccess = async () => {
-    setLoading(true);
-    try {
-        const u = await api.getCurrentUser();
-        setUser(u);
-        if (u) {
-            await loadUserData(u);
-            
-            // Check for pending request submission from guest flow
-            if (pendingRequestData) {
-                await api.createRequest({ ...pendingRequestData, userId: u.id });
-                setPendingRequestData(null); // Clear pending
-                showToastMessage('Request submitted successfully!', 'success');
-                // Force a data refresh to show the new request immediately
-                const updatedReqs = await api.getRequests(u);
-                setRequests(updatedReqs);
-                setCurrentPage('dashboard');
-            } else {
-                setCurrentPage('dashboard');
-            }
-        } else {
-            // Fallback if getCurrentUser fails but login succeeded (rare)
-            setCurrentPage('home');
-        }
-    } catch (e) {
-        console.error("Post-login data fetch failed", e);
-    } finally {
-        setLoading(false);
+  const openRequestForm = () => {
+    if (!user) {
+      setPendingAction('post_request');
+      showToastMessage('Please sign in to post a request', 'info');
+      setCurrentPage('login');
+    } else {
+      setShowRequestForm(true);
     }
   };
 
+  const handlePostRequest = async (data: any) => {
+    try {
+      await api.createRequest({ ...data, userId: user?.id });
+      showToastMessage('Request posted successfully!', 'success');
+      setShowRequestForm(false);
+      refreshData();
+    } catch (error) {
+      showToastMessage('Failed to post request.', 'error');
+    }
+  };
+
+  const handleSubmitQuote = async (quoteData: any) => {
+    if (!quotingRequestId || !user) return;
+    const provider = providers.find(p => p.id === user.id);
+    if (!provider) {
+       showToastMessage('Provider profile not found.', 'error');
+       return;
+    }
+
+    try {
+      await api.submitQuote(quotingRequestId, provider, quoteData);
+      showToastMessage('Quote submitted successfully!', 'success');
+      setQuotingRequestId(null);
+      refreshData();
+    } catch (error) {
+      showToastMessage('Failed to submit quote.', 'error');
+    }
+  };
+
+  const handleAcceptQuote = async () => {
+    if (!acceptingQuote) return;
+    try {
+      await api.acceptQuote(requests.find(r => r.quotes.some(q => q.id === acceptingQuote.quote.id))?.id || '', acceptingQuote.quote.id);
+      showToastMessage('Quote accepted!', 'success');
+      // Note: Payment/Completion flow would continue here, handled inside modal logic usually or triggers refresh
+      refreshData();
+      // Don't close modal yet, wait for payment completion flow inside component
+    } catch (e) {
+      showToastMessage('Failed to accept quote.', 'error');
+    }
+  };
+
+  const handlePaymentComplete = async (method: 'online' | 'offline') => {
+    if (!acceptingQuote) return;
+    const requestId = requests.find(r => r.quotes.some(q => q.id === acceptingQuote.quote.id))?.id;
+    if (requestId) {
+        // Automatically close request if paid
+        await api.completeOrder(requestId);
+        showToastMessage('Order confirmed and request closed.', 'success');
+        setAcceptingQuote(null);
+        refreshData();
+    }
+  };
+
+  const handleDeleteRequest = async (requestId: string) => {
+     try {
+       await api.permanentDeleteRequest(requestId);
+       showToastMessage('Request deleted.', 'info');
+       refreshData();
+     } catch (e) {
+       showToastMessage('Failed to delete.', 'error');
+     }
+  };
+
   // --- RENDER ---
-  if (loading) {
+
+  if (isLoading) {
+     return <div className="min-h-screen flex items-center justify-center bg-gray-50 text-dubai-gold animate-pulse">Loading DubaiLink...</div>;
+  }
+
+  // 1. Auth Page
+  if (currentPage === 'login' && !user) {
     return (
-      <div className="flex h-screen items-center justify-center bg-gray-50">
-         <div className="flex flex-col items-center">
-            <div className="w-12 h-12 border-4 border-dubai-gold border-t-transparent rounded-full animate-spin mb-4"></div>
-            <p className="text-gray-500 text-sm font-medium">Loading DubaiLink...</p>
-         </div>
-      </div>
+      <>
+        <AuthPage onSuccess={handleLogin} showToast={showToastMessage} />
+        <Toast 
+          message={toast.message} 
+          type={toast.type} 
+          isVisible={toast.isVisible} 
+          onClose={() => setToast({ ...toast, isVisible: false })} 
+        />
+      </>
     );
   }
 
-  // Auth Page Standalone
-  if (currentPage === 'auth' && !user) {
-     return <AuthPage onSuccess={handleLoginSuccess} showToast={showToastMessage} />;
-  }
-
-  // Verification Gate
-  if (user && !user.emailVerified && user.role !== UserRole.ADMIN && currentPage !== 'home') {
-     return (
+  // 2. Verify Email Page
+  if (user && !user.emailVerified) {
+    return (
+      <>
         <VerifyEmailPage 
-           user={user} 
-           onLogout={handleLogout} 
-           onVerificationCheck={async () => {
-               const u = await api.refreshUserAuth();
-               if(u && u.emailVerified) {
-                   setUser(u);
-                   await loadUserData(u);
-               }
-           }} 
+          user={user} 
+          onLogout={handleLogout} 
+          onVerificationCheck={async () => {
+             const u = await api.refreshUserAuth();
+             if (u?.emailVerified) {
+                setUser(u);
+                showToastMessage('Email verified!', 'success');
+             } else {
+                showToastMessage('Email not verified yet.', 'error');
+             }
+          }} 
         />
-     );
+        <Toast 
+          message={toast.message} 
+          type={toast.type} 
+          isVisible={toast.isVisible} 
+          onClose={() => setToast({ ...toast, isVisible: false })} 
+        />
+      </>
+    );
   }
 
+  // 3. Main Layout
   return (
-    <Layout 
-      user={user} 
-      currentPage={currentPage} 
-      setCurrentPage={setCurrentPage} 
+    <Layout
+      user={user}
+      currentPage={currentPage}
+      setCurrentPage={setCurrentPage}
       onLogout={handleLogout}
-      onLoginClick={() => setCurrentPage('auth')}
-      onPostRequest={() => openRequestForm()}
+      onLoginClick={() => setCurrentPage('login')}
+      onPostRequest={openRequestForm}
       notifications={notifications}
-      onMarkRead={async (id) => {
-         await api.markNotificationAsRead(id);
-         setNotifications(prev => prev.map(n => n.id === id ? {...n, read: true} : n));
-      }}
-      onMarkAllRead={async () => {
-         if(user) {
-            await api.markAllNotificationsAsRead(user.id);
-            setNotifications(prev => prev.map(n => ({...n, read: true})));
-         }
-      }}
-      onToggleAi={() => setShowAi(true)}
+      onMarkRead={(id) => api.markNotificationAsRead(id).then(refreshData)}
+      onMarkAllRead={() => user && api.markAllNotificationsAsRead(user.id).then(refreshData)}
+      onToggleAi={() => setShowAiAssistant(!showAiAssistant)}
       siteSettings={siteSettings}
       adminSection={adminSection}
       setAdminSection={setAdminSection}
     >
-       {/* HOME PAGE (Mobile & Desktop) */}
-       {currentPage === 'home' && (
-        <div className="min-h-[80vh] bg-gray-50 pb-8 pt-6">
-           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
-              
-              {/* Hero Banner */}
-              <div className="relative overflow-hidden rounded-2xl bg-dubai-dark text-white shadow-lg p-8 sm:p-12 min-h-[300px] flex items-center">
-                 {siteSettings.heroImage && (
-                    <>
-                        <div className="absolute inset-0 bg-black/50 z-0"></div>
-                        <img src={siteSettings.heroImage} alt="Hero" className="absolute inset-0 w-full h-full object-cover -z-10" />
-                    </>
-                 )}
-                 {!siteSettings.heroImage && (
-                    <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full -mr-20 -mt-20 blur-3xl"></div>
-                 )}
-                 <div className="relative z-10 max-w-2xl">
-                    {/* Trending Tag */}
-                    <div className="mb-4">
-                        <span className="bg-[#3D3525] text-[#C5A059] text-xs font-bold px-2 py-1 rounded uppercase tracking-wider">Trending</span>
-                    </div>
-                    <h2 className="text-3xl sm:text-5xl font-bold mb-4 tracking-tight">{siteSettings.heroTitle || "Golden Visa AE"}</h2>
-                    <p className="text-gray-200 text-lg mb-8 max-w-xl leading-relaxed">{siteSettings.heroSubtitle || "Secure your 10-year residency today with expert guidance."}</p>
-                    <div className="flex gap-3">
-                        <button 
-                           onClick={() => openRequestForm(ServiceCategory.VISA)}
-                           className="bg-dubai-gold text-white text-base font-bold px-8 py-3 rounded-lg hover:bg-yellow-600 transition-colors shadow-lg"
-                        >
-                           {siteSettings.heroButtonText || "Post Request"}
-                        </button>
-                    </div>
-                 </div>
-              </div>
-
-              {/* Service Categories - Matching Screenshot */}
-              <div className="py-4">
-                 <h3 className="text-xl font-bold text-gray-900 mb-6">Browse Services</h3>
-                 
-                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
-                    {serviceTypes.length > 0 && serviceTypes.filter(s => s.isActive).map(s => {
-                        const name = s.name.toLowerCase();
-                        
-                        // Icon mapping based on text matching
-                        let icon = null;
-                        let colorClass = 'text-green-600 bg-green-50'; // Default Green (as per screenshot mostly)
-
-                        if (name.includes('visa')) {
-                            // Blue Card Icon
-                            colorClass = 'text-blue-600 bg-blue-50';
-                            icon = <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />;
-                        } else if (name.includes('tour') || name.includes('travel')) {
-                            // Triangle / Tree Icon (Green)
-                            icon = <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />;
-                        } else if (name.includes('car') || name.includes('lift') || name.includes('rent')) {
-                            // Triangle / Navigation Icon (Green)
-                            icon = <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />;
-                        } else if (name.includes('insurance')) {
-                            // Triangle Icon (Green)
-                            icon = <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />;
-                        } else if (name.includes('pack') || name.includes('mover')) {
-                            // Triangle Icon (Green)
-                            icon = <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />;
-                        } else {
-                            // Default Triangle Icon (Green)
-                            icon = <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />;
-                        }
-
-                        return (
-                            <div key={s.id} onClick={() => openRequestForm(s.name)} className="bg-white p-8 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center text-center hover:bg-gray-50 cursor-pointer transition-all hover:shadow-md h-full justify-center">
-                               <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-4 ${colorClass}`}>
-                                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                       {icon}
-                                   </svg>
-                               </div>
-                               <span className="text-base font-bold text-gray-900 mb-2">{s.name}</span>
-                               <span className="text-xs text-gray-500 leading-relaxed line-clamp-3">{s.description}</span>
-                            </div>
-                        );
-                    })}
-                 </div>
-              </div>
-
-              {/* Recent Activity */}
-              {user && requests.length > 0 && (
-                <div className="py-4 border-t border-gray-200 mt-8">
-                   <div className="flex justify-between items-center mb-4">
-                      <h3 className="text-xl font-bold text-gray-900">Recent Activity</h3>
-                      <button onClick={() => setCurrentPage('dashboard')} className="text-sm text-dubai-gold font-bold hover:underline">View All</button>
-                   </div>
-                   <div className="space-y-3">
-                        {requests.slice(0, 3).map(req => (
-                            <div key={req.id} onClick={() => setCurrentPage('dashboard')} className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 flex justify-between items-center cursor-pointer hover:bg-gray-50 transition-colors">
-                                <div>
-                                    <div className="flex items-center gap-2 mb-1">
-                                        <span className="text-xs font-bold bg-gray-100 text-gray-600 px-2 py-0.5 rounded uppercase">{req.category}</span>
-                                        <span className="text-xs text-gray-400">{new Date(req.createdAt).toLocaleDateString()}</span>
-                                    </div>
-                                    <p className="font-bold text-gray-900">{req.title}</p>
-                                    <p className="text-sm text-gray-500 mt-1">{req.quotes.length} Quotes Received</p>
-                                </div>
-                                <div className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${
-                                    req.status === 'open' ? 'bg-blue-50 text-blue-700' : 
-                                    req.status === 'quoted' ? 'bg-yellow-50 text-yellow-700' : 
-                                    'bg-green-50 text-green-700'
-                                }`}>
-                                    {req.status}
-                                </div>
-                            </div>
-                        ))}
-                   </div>
-                </div>
-              )}
-           </div>
-        </div>
-       )}
-       
-       {/* DASHBOARD */}
-       {currentPage === 'dashboard' && user && (
-         user.role === UserRole.ADMIN ? (
+       {/* HOME / DASHBOARD */}
+       {(currentPage === 'home' || currentPage === 'dashboard') && (
+         <>
+           {user?.role === UserRole.ADMIN && currentPage === 'dashboard' ? (
              <AdminDashboard 
-                requests={requests} 
-                providers={providers} 
-                users={adminUsers} 
-                onDeleteRequest={async (id) => { await api.permanentDeleteRequest(id); refreshData(); showToastMessage('Request deleted', 'success'); }} 
-                onToggleVerifyProvider={async (id) => { await api.toggleProviderVerification(id); refreshData(); showToastMessage('Verification updated', 'success'); }} 
+                requests={requests}
+                providers={providers}
+                users={users}
+                onDeleteRequest={handleDeleteRequest}
+                onToggleVerifyProvider={async (pid) => { await api.toggleProviderVerification(pid); refreshData(); }}
                 activeSection={adminSection}
                 showToast={showToastMessage}
              />
-         ) : (
+           ) : (
              <Dashboard 
-                role={user.role} 
-                requests={requests} 
+                role={user?.role || UserRole.USER}
+                requests={requests}
                 conversations={conversations}
-                currentProvider={user.role === UserRole.PROVIDER ? providers.find(p => p.id === user.id) : undefined}
-                currentProviderId={user.id}
-                onViewProvider={(id) => { setViewingProviderId(id); setCurrentPage('provider-view'); }}
-                onAcceptQuote={(reqId, quoteId) => { 
-                    const r = requests.find(r => r.id === reqId); 
-                    const q = r?.quotes.find(q => q.id === quoteId); 
-                    if(q && r) { setActiveQuoteForAcceptance({quote: q, reqStatus: r.status}); setShowAcceptModal(true); } 
+                currentProvider={user?.role === UserRole.PROVIDER ? providers.find(p => p.id === user.id) : undefined}
+                currentProviderId={user?.id}
+                onViewProvider={(pid) => { setViewingProviderId(pid); setCurrentPage('provider-view'); }}
+                onAcceptQuote={(rid, qid) => {
+                   const req = requests.find(r => r.id === rid);
+                   const quote = req?.quotes.find(q => q.id === qid);
+                   if (quote) setAcceptingQuote({ quote, reqStatus: req?.status });
                 }}
-                onChatWithProvider={(pId, pName) => setChatUser({id: pId, name: pName})}
-                onChatWithUser={(uId, uName) => setChatUser({id: uId, name: uName})}
-                onSubmitQuote={(reqId) => { setActiveRequestForQuote(reqId); setShowQuoteModal(true); }}
-                onViewQuote={(q) => { setActiveQuoteDetail(q); setShowQuoteDetails(true); }}
-                onDeleteRequest={async (id) => { await api.permanentDeleteRequest(id); refreshData(); showToastMessage('Request deleted', 'success'); }}
-                onPostRequest={() => openRequestForm()}
-                onIgnoreRequest={(id) => { /* Implement ignore logic if needed */ }}
+                onChatWithProvider={(pid, name) => setActiveChatUser({ id: pid, name })}
+                onChatWithUser={(uid, name) => setActiveChatUser({ id: uid, name })}
+                onSubmitQuote={(rid) => setQuotingRequestId(rid)} // Only for providers in dashboard context if needed
+                onIgnoreRequest={(rid) => { /* Implement ignore logic if needed */ }}
+                onViewQuote={(q) => setViewingQuote(q)}
+                onDeleteRequest={handleDeleteRequest}
+                onPostRequest={openRequestForm}
+                isHomeView={currentPage === 'home'}
              />
-         )
+           )}
+         </>
        )}
 
-       {/* MESSAGES */}
-       {currentPage === 'messages' && (
-          <MessagesPage 
-            conversations={conversations} 
-            onOpenChat={(uid, uname) => setChatUser({id: uid, name: uname})} 
-          />
-       )}
-
-       {/* PROVIDER LEADS */}
+       {/* PROVIDER LEADS PAGE */}
        {currentPage === 'provider-leads' && user?.role === UserRole.PROVIDER && (
           <ProviderLeadsPage 
-             requests={requests.filter(r => !r.quotes.some(q => q.providerId === user.id))} // Leads not quoted
-             allRequests={requests} // All requests for matching
+             requests={requests} // Note: api.getRequests returns relevant requests for user/provider
+             allRequests={requests} // For this simple implementation, it's the same list
              currentProviderId={user.id}
              currentProvider={providers.find(p => p.id === user.id)}
-             onSubmitQuote={(reqId) => { setActiveRequestForQuote(reqId); setShowQuoteModal(true); }}
+             onSubmitQuote={(rid) => setQuotingRequestId(rid)}
+             onIgnoreRequest={(rid) => { /* ignore */ }}
           />
        )}
-       
+
+       {/* MESSAGES PAGE */}
+       {currentPage === 'messages' && user && (
+          <MessagesPage 
+            conversations={conversations}
+            onOpenChat={(uid, name) => setActiveChatUser({ id: uid, name })}
+          />
+       )}
+
        {/* PROVIDER PROFILE VIEW (Public) */}
        {currentPage === 'provider-view' && viewingProviderId && (
           <ProviderProfileView 
-             provider={providers.find(p => p.id === viewingProviderId) || {id: viewingProviderId, name: 'Provider', services: [], rating: 0, reviewCount: 0, badges: [], description: '', location: '', serviceTypes: [], isVerified: false, reviews: []} as ProviderProfile}
+             provider={providers.find(p => p.id === viewingProviderId) || {id: viewingProviderId, name: 'Provider', services: [], rating: 0, reviewCount: 0, badges: [], description: '', location: '', serviceTypes: [], isVerified: false, reviews: [], gallery: [], coverImage: '', profileImage: '', tagline: ''}}
+             currentUser={user}
              onBack={() => setCurrentPage('dashboard')}
              onSubmitReview={async (pid, rev) => { await api.addReview(pid, rev); showToastMessage('Review submitted', 'success'); refreshData(); }}
-             onRequestQuote={() => { showToastMessage('Please post a request to get quotes', 'info'); openRequestForm(); }}
+             onRequestQuote={() => { 
+                if (!user) {
+                   setPendingAction('post_request');
+                   showToastMessage('Please sign in to request a quote', 'info');
+                   setCurrentPage('login');
+                } else {
+                   openRequestForm();
+                }
+             }}
              showToast={showToastMessage}
           />
        )}
@@ -437,120 +363,91 @@ const App: React.FC = () => {
        {/* PROFILE SETTINGS */}
        {currentPage === 'profile-settings' && user && (
           <ProfileSettings 
-             role={user.role} 
-             initialData={user.role === UserRole.PROVIDER ? providers.find(p => p.id === user.id) : user} 
+             role={user.role}
+             initialData={user.role === UserRole.PROVIDER ? { ...providers.find(p => p.id === user.id), email: user.email } : user}
              onSave={async (data) => {
-                 if(user.role === UserRole.PROVIDER) {
-                     await api.updateProvider(user.id, data);
-                     await api.updateUser({ ...user, name: data.name, email: data.email });
-                 } else {
-                     await api.updateUser({ ...user, ...data });
-                 }
-                 showToastMessage('Profile updated successfully', 'success');
-                 refreshData();
+                if (user.role === UserRole.PROVIDER) await api.updateProvider(user.id, data);
+                else await api.updateUser({ ...user, ...data });
+                showToastMessage('Profile updated successfully', 'success');
+                refreshData();
+                setCurrentPage('dashboard');
              }}
              onCancel={() => setCurrentPage('dashboard')}
-             onPreview={() => { 
-                if(user.role === UserRole.PROVIDER) { 
-                   setViewingProviderId(user.id); 
-                   setCurrentPage('provider-view'); 
-                } 
+             onPreview={() => {
+                if (user.role === UserRole.PROVIDER) {
+                   setViewingProviderId(user.id);
+                   setCurrentPage('provider-view');
+                }
              }}
           />
        )}
-       
-       {/* --- MODALS --- */}
+
+       {/* TRASH PAGE */}
+       {currentPage === 'trash' && (
+          <TrashPage 
+             deletedRequests={[]} // Implement soft delete filter here if using soft delete
+             onRestore={() => {}} 
+             onPermanentDelete={() => {}} 
+             onBack={() => setCurrentPage('dashboard')} 
+          />
+       )}
+
+       {/* --- MODALS & OVERLAYS --- */}
 
        {showRequestForm && (
          <RequestForm 
-           initialCategory={activeCategory}
-           serviceTypes={serviceTypes}
-           onSubmit={async (data) => {
-             if(user) {
-                 await api.createRequest({ ...data, userId: user.id });
-                 setShowRequestForm(false);
-                 showToastMessage('Request posted successfully!', 'success');
-                 refreshData();
-             } else {
-                 // Guest Flow: Save data pending login
-                 setPendingRequestData(data);
-                 setShowRequestForm(false);
-                 setCurrentPage('auth');
-                 showToastMessage('Please sign in to submit your request.', 'info');
-             }
-           }}
-           onCancel={() => setShowRequestForm(false)}
+           onSubmit={handlePostRequest} 
+           onCancel={() => setShowRequestForm(false)} 
          />
        )}
 
-       {showQuoteModal && activeRequestForQuote && user && (
-          <SubmitQuoteModal 
-             requestTitle={requests.find(r => r.id === activeRequestForQuote)?.title || 'Request'}
-             onClose={() => setShowQuoteModal(false)}
-             onSubmit={async (quoteData) => {
-                 const providerProfile = providers.find(p => p.id === user.id);
-                 if (providerProfile) {
-                    await api.submitQuote(activeRequestForQuote, providerProfile, quoteData);
-                    setShowQuoteModal(false);
-                    showToastMessage('Quote submitted!', 'success');
-                    refreshData();
-                 }
-             }}
-          />
+       {showAiAssistant && (
+         <AiAssistant 
+           currentUser={user}
+           onClose={() => setShowAiAssistant(false)} 
+         />
        )}
 
-       {showAcceptModal && activeQuoteForAcceptance && (
-          <QuoteAcceptanceModal 
-             quote={activeQuoteForAcceptance.quote}
-             requestStatus={activeQuoteForAcceptance.reqStatus}
-             onAccept={async () => {
-                 const q = activeQuoteForAcceptance.quote;
-                 const r = requests.find(req => req.quotes.some(qu => qu.id === q.id));
-                 if(r) {
-                     await api.acceptQuote(r.id, q.id);
-                     showToastMessage('Quote accepted!', 'success');
-                     refreshData();
-                     // Update local state immediately for UX
-                     setActiveQuoteForAcceptance({...activeQuoteForAcceptance, reqStatus: 'accepted'});
-                 }
-             }}
-             onPaymentComplete={async () => {
-                 const q = activeQuoteForAcceptance.quote;
-                 const r = requests.find(req => req.quotes.some(qu => qu.id === q.id));
-                 if(r) {
-                     await api.completeOrder(r.id);
-                     setShowAcceptModal(false);
-                     showToastMessage('Order completed!', 'success');
-                     refreshData();
-                 }
-             }}
-             onClose={() => setShowAcceptModal(false)}
-          />
+       {activeChatUser && user && (
+         <DirectMessageModal 
+           recipientId={activeChatUser.id}
+           recipientName={activeChatUser.name}
+           currentUser={user}
+           onClose={() => setActiveChatUser(null)}
+           showToast={showToastMessage}
+         />
        )}
 
-       {showQuoteDetails && activeQuoteDetail && (
-           <QuoteDetailsModal quote={activeQuoteDetail} onClose={() => setShowQuoteDetails(false)} />
+       {quotingRequestId && (
+         <SubmitQuoteModal 
+           requestTitle={requests.find(r => r.id === quotingRequestId)?.title || 'Request'}
+           onClose={() => setQuotingRequestId(null)}
+           onSubmit={handleSubmitQuote}
+         />
        )}
 
-       {showAi && (
-           <AiAssistant currentUser={user} onClose={() => setShowAi(false)} />
+       {acceptingQuote && (
+         <QuoteAcceptanceModal 
+           quote={acceptingQuote.quote}
+           requestStatus={acceptingQuote.reqStatus}
+           onAccept={handleAcceptQuote}
+           onPaymentComplete={handlePaymentComplete}
+           onClose={() => setAcceptingQuote(null)}
+         />
        )}
 
-       {chatUser && user && (
-           <DirectMessageModal 
-              recipientId={chatUser.id}
-              recipientName={chatUser.name}
-              currentUser={user}
-              onClose={() => setChatUser(null)}
-              showToast={showToastMessage}
-           />
+       {viewingQuote && (
+         <QuoteDetailsModal 
+           quote={viewingQuote}
+           onClose={() => setViewingQuote(null)}
+         />
        )}
-       
+
        <Toast 
-          message={toast.message} 
-          type={toast.type} 
-          isVisible={toast.isVisible} 
-          onClose={() => setToast(prev => ({ ...prev, isVisible: false }))} 
+         message={toast.message} 
+         type={toast.type} 
+         isVisible={toast.isVisible} 
+         onClose={() => setToast({ ...toast, isVisible: false })} 
        />
     </Layout>
   );
