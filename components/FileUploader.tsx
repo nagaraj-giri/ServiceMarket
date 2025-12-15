@@ -48,7 +48,15 @@ const FileUploader: React.FC<FileUploaderProps> = ({ currentImageUrl, onUploadCo
       let msg = error.message || 'Failed to upload image.';
       
       if (error.code === 'storage/unauthorized') {
-         msg = `Access Denied. If you are on a custom domain, please configure CORS for your storage bucket. (Code: ${error.code})`;
+         msg = `Permission Denied. Check the browser console for a fix command.`;
+         
+         // Developer Help: Log the exact command needed to fix this common issue
+         console.group("⚠️ Upload Permission Error Detected");
+         console.log("%cThis is likely a CORS issue because you are running the frontend on a different domain (like AI Studio) than your Firebase Bucket.", "font-weight: bold; color: orange");
+         console.log("To fix this, open Google Cloud Cloud Shell (https://console.cloud.google.com) and run:");
+         console.log("%cgsutil cors set cors.json gs://servicemarket-22498701-b4b44.firebasestorage.app", "background: #eee; color: #333; padding: 4px; border-radius: 4px; font-family: monospace;");
+         console.log("(Ensure you have created the cors.json file first as shown in the project files)");
+         console.groupEnd();
       } else if (error.code === 'storage/retry-limit-exceeded') {
          msg = 'Network unstable. Upload failed after retries.';
       } else if (error.code === 'storage/canceled') {
