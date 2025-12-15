@@ -2,14 +2,36 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-    // Explicitly match the uploads folder where the app saves files
+    // Standard uploads folder (Backward compatibility & General use)
     match /uploads/{imageId} {
       allow read: if true;
       allow write: if request.auth != null && 
-                   request.resource.size < 5 * 1024 * 1024 && // 5MB limit
-                   request.resource.contentType.matches('image/.*'); // Only images
+                   request.resource.size < 20 * 1024 * 1024 && // Increased limit to 20MB for versatility
+                   request.resource.contentType.matches('image/.*');
     }
-    // Fallback for any other paths (deny by default or keep previous permissive logic if needed for other features)
+
+    // Organized Image Storage Rules
+    // Path format: /images/{type}/{filename}
+    match /images/{imageType}/{imageId} {
+      allow read: if true;
+      allow write: if request.auth != null 
+                   && request.resource.contentType.matches('image/.*')
+                   && (
+                     // Profile Pictures & Logos: Limited to 5MB
+                     ((imageType == 'profiles' || imageType == 'logos') && request.resource.size < 5 * 1024 * 1024) ||
+                     
+                     // Gallery Images: Limited to 15MB
+                     (imageType == 'gallery' && request.resource.size < 15 * 1024 * 1024) ||
+                     
+                     // Cover Images & High Res Banners: Limited to 25MB
+                     (imageType == 'covers' && request.resource.size < 25 * 1024 * 1024) ||
+                     
+                     // Fallback for other image types
+                     request.resource.size < 10 * 1024 * 1024
+                   );
+    }
+
+    // Fallback for any other paths
     match /{allPaths=**} {
       allow read: if true;
       allow write: if request.auth != null;

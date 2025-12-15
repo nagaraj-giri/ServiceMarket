@@ -5,8 +5,8 @@ import { Quote, ServiceRequest } from '../types';
 interface QuoteAcceptanceModalProps {
   quote: Quote;
   requestStatus: ServiceRequest['status'];
-  onAccept: () => void;
-  onPaymentComplete: (method: 'online' | 'offline') => void;
+  onAccept: () => Promise<void>;
+  onPaymentComplete: (method: 'online' | 'offline') => Promise<void>;
   onClose: () => void;
 }
 
@@ -26,21 +26,28 @@ const QuoteAcceptanceModal: React.FC<QuoteAcceptanceModalProps> = ({ quote, requ
     }
   }, [requestStatus]);
 
-  const handleAcceptQuote = () => {
+  const handleAcceptQuote = async () => {
     setIsProcessing(true);
-    // Simulate API call
-    setTimeout(() => {
+    try {
+      await onAccept();
+    } catch (e) {
+      console.error(e);
+    } finally {
       setIsProcessing(false);
-      onAccept(); // This updates App state to 'accepted', triggering useEffect to set step 2
-    }, 1000);
+    }
   };
 
-  const handlePayment = () => {
+  const handlePayment = async () => {
     setIsProcessing(true);
-    // Simulate payment processing
-    setTimeout(() => {
-      setIsProcessing(false);
-      onPaymentComplete(paymentMethod); // This updates App state to 'closed', triggering useEffect to set step 3
+    // Simulate payment gateway delay for UX, then process the backend completion
+    setTimeout(async () => {
+      try {
+        await onPaymentComplete(paymentMethod);
+      } catch (e) {
+        console.error(e);
+      } finally {
+        setIsProcessing(false);
+      }
     }, 1500);
   };
 

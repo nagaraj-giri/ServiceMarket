@@ -1,9 +1,10 @@
+
 import React, { useState } from 'react';
 
 interface SubmitQuoteModalProps {
   requestTitle: string;
   onClose: () => void;
-  onSubmit: (quote: { price: number; timeline: string; description: string }) => void;
+  onSubmit: (quote: { price: number; timeline: string; description: string }) => Promise<void>;
 }
 
 const SubmitQuoteModal: React.FC<SubmitQuoteModalProps> = ({ requestTitle, onClose, onSubmit }) => {
@@ -12,20 +13,22 @@ const SubmitQuoteModal: React.FC<SubmitQuoteModalProps> = ({ requestTitle, onClo
   const [description, setDescription] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!price || !timeline || !description) return;
 
     setIsSubmitting(true);
-    // Simulate API delay
-    setTimeout(() => {
-      onSubmit({
+    try {
+      await onSubmit({
         price: Number(price),
         timeline,
         description
       });
+    } catch (error) {
+      console.error(error);
+    } finally {
       setIsSubmitting(false);
-    }, 1000);
+    }
   };
 
   return (

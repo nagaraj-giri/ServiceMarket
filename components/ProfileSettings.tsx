@@ -9,7 +9,7 @@ import FileUploader from './FileUploader';
 interface ProfileSettingsProps {
   role: UserRole;
   initialData?: any;
-  onSave: (data: any) => void;
+  onSave: (data: any) => Promise<void>;
   onCancel: () => void;
   onPreview?: () => void;
 }
@@ -126,13 +126,16 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role, initialData, on
     }
   }, [role, initialData]);
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSaving(true);
-    setTimeout(() => {
+    try {
+      await onSave(formData);
+    } catch(e) {
+      console.error(e);
+    } finally {
       setIsSaving(false);
-      onSave(formData);
-    }, 1000);
+    }
   };
 
   const handleAddTag = () => {

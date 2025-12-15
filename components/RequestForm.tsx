@@ -6,7 +6,7 @@ import { getPlaceSuggestions, PlaceSuggestion } from '../services/geminiService'
 import { api } from '../services/api';
 
 interface RequestFormProps {
-  onSubmit: (request: Omit<ServiceRequest, 'id' | 'quotes' | 'status' | 'createdAt'>) => void;
+  onSubmit: (request: Omit<ServiceRequest, 'id' | 'quotes' | 'status' | 'createdAt'>) => Promise<void>;
   onCancel: () => void;
   initialCategory?: string;
   serviceTypes?: ServiceType[];
@@ -45,21 +45,11 @@ const RequestForm: React.FC<RequestFormProps> = ({ onSubmit, onCancel, initialCa
         if (types && types.length > 0) {
             setAvailableServiceTypes(types.filter(t => t.isActive));
         } else {
-            // Fallback defaults if no dynamic types exist
-            setAvailableServiceTypes([
-                { id: 'def_visa', name: ServiceCategory.VISA, description: 'Assistance with tourist, family, employment, and visa renewal processes.', isActive: true },
-                { id: 'def_biz', name: ServiceCategory.BUSINESS, description: 'Complete support for Mainland, Freezone, and Offshore company formation.', isActive: true },
-                { id: 'def_travel', name: ServiceCategory.TRAVEL, description: 'Custom holiday packages, flight bookings, and luxury concierge services.', isActive: true }
-            ]);
+            // No fallbacks - user must define services in admin or use seeded DB data
+            setAvailableServiceTypes([]);
         }
       } catch (error) {
         console.error("Failed to load service types", error);
-        // Fallback on error
-        setAvailableServiceTypes([
-            { id: 'def_visa', name: ServiceCategory.VISA, description: 'Assistance with tourist, family, employment, and visa renewal processes.', isActive: true },
-            { id: 'def_biz', name: ServiceCategory.BUSINESS, description: 'Complete support for Mainland, Freezone, and Offshore company formation.', isActive: true },
-            { id: 'def_travel', name: ServiceCategory.TRAVEL, description: 'Custom holiday packages, flight bookings, and luxury concierge services.', isActive: true }
-        ]);
       }
     };
     fetchServiceTypes();
@@ -132,25 +122,27 @@ const RequestForm: React.FC<RequestFormProps> = ({ onSubmit, onCancel, initialCa
     setShowSuggestions(false);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!category.trim() || !title.trim() || !locality.trim() || !description.trim()) {
        return; 
     }
 
     setIsSubmitting(true);
-    // Simulate API delay
-    setTimeout(() => {
-      onSubmit({
-        userId: 'current-user', // Mocked, replaced in App.tsx
+    try {
+      await onSubmit({
+        userId: 'current-user', // Mocked here, replaced in api call logic in App.tsx
         category,
         title,
         description,
         locality,
         coordinates: selectedCoordinates || undefined
       });
+    } catch (error) {
+      console.error("Submission failed", error);
+    } finally {
       setIsSubmitting(false);
-    }, 1000);
+    }
   };
 
   // Improved filtering logic for Category Dropdown

@@ -22,9 +22,6 @@ const ProviderProfile: React.FC<ProviderProfileProps> = ({ provider, onBack, onS
 
     setIsSubmitting(true);
     try {
-      // Small delay to simulate network feel before promise resolution if desired, 
-      // but assuming onSubmitReview is async
-      await new Promise(r => setTimeout(r, 800)); 
       await onSubmitReview(provider.id, {
         author: 'Current User',
         rating: newReviewRating,
@@ -32,7 +29,6 @@ const ProviderProfile: React.FC<ProviderProfileProps> = ({ provider, onBack, onS
       });
       setNewReviewContent('');
       setNewReviewRating(5);
-      // Toast is handled by parent, or we can fallback if not provided
     } catch (error) {
        // Error handled by parent usually, but nice to catch
     } finally {
@@ -69,7 +65,7 @@ const ProviderProfile: React.FC<ProviderProfileProps> = ({ provider, onBack, onS
                   )}
                   {provider.badges?.filter(b => b !== 'Verified').map((badge, idx) => (
                      <div key={idx} className="bg-yellow-500/20 text-yellow-100 px-2 py-1 rounded-full text-[10px] font-bold flex items-center gap-1 border border-yellow-500/30 backdrop-blur-sm whitespace-nowrap flex-shrink-0">
-                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" /></svg>
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" /></svg>
                         {badge}
                      </div>
                   ))}

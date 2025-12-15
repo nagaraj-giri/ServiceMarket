@@ -1,651 +1,268 @@
-
-// api.ts – Modular Firebase v9+
-
-import { auth, db, storage } from "./firebase";
-
-import {
-  collection,
-  doc,
-  getDoc,
-  getDocs,
-  setDoc,
-  updateDoc,
-  deleteDoc,
-  addDoc,
-  query,
-  where,
-  orderBy,
-  writeBatch,
-  Timestamp,
-  serverTimestamp,
-} from "firebase/firestore";
-
-import {
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  signOut,
-  onAuthStateChanged,
-  GoogleAuthProvider,
-  signInWithPopup,
-  sendPasswordResetEmail,
-  updatePassword,
-  sendEmailVerification,
-  User as FirebaseUser
-} from "firebase/auth";
-
-import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
+import { db, auth, storage } from './firebase';
 import { 
-  User, 
-  UserRole, 
-  ProviderProfile, 
-  ServiceRequest, 
-  Quote, 
-  Notification, 
-  Review, 
-  DirectMessage, 
-  Conversation, 
-  SiteSettings, 
-  ServiceType, 
-  AuditLog, 
-  Coordinates,
-  AiInteraction
-} from "../types";
+  collection, getDocs, doc, setDoc, getDoc, updateDoc, deleteDoc, 
+  query, where, orderBy, limit, addDoc, Timestamp, writeBatch, arrayUnion, arrayRemove 
+} from 'firebase/firestore';
+import { 
+  signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, 
+  onAuthStateChanged, GoogleAuthProvider, signInWithPopup, sendPasswordResetEmail, 
+  sendEmailVerification, updatePassword, User as FirebaseUser 
+} from 'firebase/auth';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { 
+  User, UserRole, ServiceRequest, ProviderProfile, Notification, 
+  Quote, ServiceType, Conversation, DirectMessage, AuditLog, 
+  AiInteraction, SiteSettings, Review 
+} from '../types';
+import { DEFAULT_SERVICE_TYPES, API_DELAY } from '../constants';
 
-
-// --- CONSTANTS ---
-const MAX_QUOTES_PER_REQUEST = 5;
-const MAX_REQUEST_AGE_HOURS = 24;
-
-// --- GEOSPATIAL HELPERS ---
-const calculateDistance = (coord1: Coordinates, coord2: Coordinates): number => {
-  const R = 6371; // km
-  const dLat = deg2rad(coord2.lat - coord1.lat);
-  const dLon = deg2rad(coord2.lng - coord1.lng);
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(deg2rad(coord1.lat)) * Math.cos(deg2rad(coord2.lat)) *
-    Math.sin(dLon / 2) * Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  const d = R * c;
-  return d;
-};
-
-const deg2rad = (deg: number) => deg * (Math.PI / 180);
-
-// --- CONVERSION HELPERS ---
-const convertTimestamp = (data: any) => {
-  if (!data) return data;
-  const newData: any = { ...data };
-
-  Object.keys(newData).forEach((key) => {
-    const value = newData[key];
-
-    if (value && typeof value.toDate === "function") {
-      newData[key] = value.toDate().toISOString();
-    } else if (Array.isArray(value)) {
-      newData[key] = value.map((item: any) => convertTimestamp(item));
-    } else if (typeof value === "object" && value !== null) {
-      newData[key] = convertTimestamp(value);
-    }
-  });
-
-  return newData;
-};
-
-// Helper to ensure role is uppercase (matching Enum) regardless of DB entry
-// Also merges auth-specific properties like emailVerified
-const normalizeUser = (id: string, data: any, authUser?: FirebaseUser | null): User => {
-  const converted = convertTimestamp(data);
-  let role = converted.role;
-  
-  if (role && typeof role === 'string') {
-      const upper = role.toUpperCase();
-      // Only normalize if it matches known roles
-      if (upper === 'ADMIN' || upper === 'PROVIDER' || upper === 'USER') {
-          role = upper;
-      }
-  } else {
-      role = UserRole.USER;
+// Helper to convert Firebase User to App User
+const mapUser = async (fbUser: FirebaseUser): Promise<User | null> => {
+  const userDoc = await getDoc(doc(db, "users", fbUser.uid));
+  if (userDoc.exists()) {
+    return { id: fbUser.uid, ...(userDoc.data() as any), emailVerified: fbUser.emailVerified } as User;
   }
-
-  return {
-    id,
-    ...converted,
-    role: role as UserRole,
-    emailVerified: authUser ? authUser.emailVerified : false
-  };
-};
-
-// --- LOGIC SIMULATION ---
-const isProviderEligibleForLead = (
-  provider: ProviderProfile,
-  request: ServiceRequest
-): boolean => {
-  if (request.status !== "open") return false;
-  if (request.quotes.some((q) => q.providerId === provider.id)) return false;
-  if (request.quotes.length >= MAX_QUOTES_PER_REQUEST) return false;
-
-  const createdAt = new Date(request.createdAt).getTime();
-  const timeElapsedMinutes = (Date.now() - createdAt) / 60000;
-  const timeElapsedHours = timeElapsedMinutes / 60;
-
-  if (timeElapsedHours > MAX_REQUEST_AGE_HOURS) return false;
-
-  // Check category match
-  if (provider.serviceTypes && provider.serviceTypes.length > 0) {
-    if (!provider.serviceTypes.includes(request.category)) {
-      return false;
-    }
-  }
-
-  // Check Location/Distance (if both have coordinates)
-  if (!request.coordinates || !provider.coordinates) {
-    return true;
-  }
-
-  const distanceKm = calculateDistance(request.coordinates, provider.coordinates);
-  if (distanceKm > 15) return false; // Hard limit 15km
-
-  // Time-decay distance logic (simulate "expanding" radius)
-  if (timeElapsedMinutes < 2) return distanceKm <= 5;
-  if (timeElapsedMinutes < 4) return distanceKm <= 8;
-  return distanceKm <= 15;
-};
-
-const distributeLeadsToProviders = async (newRequest: ServiceRequest) => {
-  try {
-    const providersSnapshot = await getDocs(collection(db, "providers"));
-    const providers = providersSnapshot.docs.map(
-      (d) => ({ id: d.id, ...(d.data() as any) } as ProviderProfile)
-    );
-
-    const batch = writeBatch(db);
-    let opCount = 0;
-
-    for (const provider of providers) {
-      if (isProviderEligibleForLead(provider, newRequest)) {
-        const notifRef = doc(collection(db, "notifications"));
-        batch.set(notifRef, {
-          userId: provider.id,
-          type: "info",
-          title: "New Lead Opportunity",
-          message: `New ${newRequest.category} request nearby: ${newRequest.title}`,
-          timestamp: Date.now(),
-          read: false,
-          link: "provider-leads",
-        });
-        opCount++;
-      }
-    }
-
-    if (opCount > 0) await batch.commit();
-  } catch (e) {
-    console.error("Error distributing leads:", e);
-  }
+  return null;
 };
 
 export const api = {
-  init: async () => {},
+  // --- AUTHENTICATION ---
 
-  // --- AUTH ---
-
-  login: async (email: string, password?: string): Promise<User> => {
-    if (!password) throw new Error("Password is required");
-    
-    const userCredential = await signInWithEmailAndPassword(auth, email, password);
-    const firebaseUser = userCredential.user;
-    const uid = firebaseUser?.uid;
-
-    if (!uid) throw new Error("Authentication failed");
-
-    const userDoc = await getDoc(doc(db, "users", uid));
-    if (userDoc.exists()) {
-      const u = normalizeUser(uid, userDoc.data(), firebaseUser);
-      if (u.isBlocked) {
-        await signOut(auth);
-        throw new Error("Your account has been blocked. Please contact support.");
-      }
-      // Log Login
-      api.logAction(u.id, "LOGIN", "User logged in", u.role);
-      return u;
-    } else {
-      throw new Error("User profile not found.");
-    }
+  login: async (email: string, password: string): Promise<User> => {
+    const cred = await signInWithEmailAndPassword(auth, email, password);
+    const user = await mapUser(cred.user);
+    if (!user) throw new Error("User record not found in database.");
+    return user;
   },
 
   loginWithGoogle: async (): Promise<User> => {
     const provider = new GoogleAuthProvider();
-    const userCredential = await signInWithPopup(auth, provider);
-    const firebaseUser = userCredential.user;
-    const { uid, email, displayName } = firebaseUser;
-
-    const userDocRef = doc(db, "users", uid);
-    const userDoc = await getDoc(userDocRef);
-
-    if (userDoc.exists()) {
-      const u = normalizeUser(uid, userDoc.data(), firebaseUser);
-      if (u.isBlocked) {
-        await signOut(auth);
-        throw new Error("Your account has been blocked. Please contact support.");
-      }
-      api.logAction(u.id, "LOGIN_GOOGLE", "User logged in via Google", u.role);
-      return u;
-    } else {
-      // Create new user profile if not exists
+    const cred = await signInWithPopup(auth, provider);
+    
+    // Check if user exists, if not create basic user
+    const userRef = doc(db, "users", cred.user.uid);
+    const userSnap = await getDoc(userRef);
+    
+    if (!userSnap.exists()) {
       const newUser: User = {
-        id: uid,
-        name: displayName || "User",
-        email: email || "",
-        role: UserRole.USER, // Default to USER
+        id: cred.user.uid,
+        name: cred.user.displayName || 'User',
+        email: cred.user.email || '',
+        role: UserRole.USER,
         joinDate: new Date().toISOString(),
-        companyName: "",
-        emailVerified: firebaseUser.emailVerified
+        emailVerified: cred.user.emailVerified
       };
-      await setDoc(userDocRef, {
-        name: newUser.name,
-        email: newUser.email,
-        role: newUser.role,
-        joinDate: newUser.joinDate,
-        companyName: newUser.companyName
-      });
-      api.logAction(uid, "REGISTER_GOOGLE", "User registered via Google", UserRole.USER);
+      await setDoc(userRef, newUser);
       return newUser;
     }
+    
+    return { id: cred.user.uid, ...(userSnap.data() as any), emailVerified: cred.user.emailVerified } as User;
   },
 
-  register: async (
-    userData: Omit<User, "id">,
-    password?: string
-  ): Promise<User> => {
-    if (!password) throw new Error("Password is required");
-
-    const userCredential = await createUserWithEmailAndPassword(
-      auth,
-      userData.email,
-      password
-    );
-    const firebaseUser = userCredential.user;
-    const uid = firebaseUser?.uid;
-
-    if (!uid) throw new Error("Registration failed");
-
-    // Send verification email
-    try {
-      // Removing actionCodeSettings to prevent auth/invalid-continue-uri errors
-      // if the current domain is not whitelisted in Firebase Console.
-      await sendEmailVerification(firebaseUser);
-      console.log("Verification email sent to:", userData.email);
-    } catch (e) {
-      console.error("Failed to send verification email:", e);
-      // We do not throw here, allowing the user to be created, 
-      // but they will land on verify page where they can resend.
-    }
-
+  register: async (userData: Omit<User, 'id' | 'joinDate' | 'emailVerified'>, password: string): Promise<User> => {
+    const cred = await createUserWithEmailAndPassword(auth, userData.email, password);
+    await sendEmailVerification(cred.user);
+    
     const newUser: User = {
-      id: uid,
-      joinDate: new Date().toISOString(),
+      id: cred.user.uid,
       ...userData,
-      emailVerified: false // Explicitly false initially for email/pass
+      joinDate: new Date().toISOString(),
+      emailVerified: false
     };
-
-    // Don't save emailVerified to Firestore, it's managed by Auth
-    const { emailVerified, ...firestoreData } = newUser;
-    await setDoc(doc(db, "users", uid), firestoreData);
-
+    
+    await setDoc(doc(db, "users", cred.user.uid), newUser);
+    
+    // If provider, create profile placeholder
     if (userData.role === UserRole.PROVIDER) {
-      // Default coordinates (Downtown Dubai approx) as fallback for map visualization
-      const defaultCoords = { lat: 25.1972, lng: 55.2744 };
-      const newProvider: ProviderProfile = {
-        id: uid,
+      const providerProfile: ProviderProfile = {
+        id: cred.user.uid,
         name: userData.companyName || userData.name,
-        tagline: "New Service Provider",
+        tagline: '',
         rating: 0,
         reviewCount: 0,
-        badges: ["New"],
-        isVerified: false,
-        description: "No description yet.",
+        badges: ['New'],
+        description: '',
         services: [],
         serviceTypes: [],
-        location: "Downtown Dubai",
-        coordinates: defaultCoords,
-        reviews: [],
+        isVerified: false,
+        location: 'Dubai, UAE',
+        reviews: []
       };
-      await setDoc(doc(db, "providers", uid), newProvider);
+      await setDoc(doc(db, "providers", cred.user.uid), providerProfile);
     }
-
-    api.logAction(uid, "REGISTER", `New user registered as ${userData.role}`, userData.role);
+    
     return newUser;
   },
 
   logout: async (): Promise<void> => {
-    const u = auth.currentUser;
-    if(u) api.logAction(u.uid, "LOGOUT", "User logged out");
     await signOut(auth);
-  },
-
-  resendVerificationEmail: async (): Promise<void> => {
-    const user = auth.currentUser;
-    if (user && !user.emailVerified) {
-      // Removing actionCodeSettings to ensure email sends even if domain not whitelisted for redirects
-      await sendEmailVerification(user);
-      console.log("Verification email resent to:", user.email);
-    }
-  },
-
-  refreshUserAuth: async (): Promise<User | null> => {
-    const user = auth.currentUser;
-    if (user) {
-      await user.reload(); // Refresh token claims
-      const updatedAuthUser = auth.currentUser;
-      const userDoc = await getDoc(doc(db, "users", user.uid));
-      if (userDoc.exists()) {
-        const u = normalizeUser(user.uid, userDoc.data(), updatedAuthUser);
-        if (u.isBlocked) {
-            await signOut(auth); // Force logout if blocked while in session
-            return null;
-        }
-        return u;
-      }
-    }
-    return null;
   },
 
   resetPassword: async (email: string): Promise<void> => {
     await sendPasswordResetEmail(auth, email);
   },
 
-  updateUserPassword: async (newPassword: string): Promise<void> => {
-    const user = auth.currentUser;
-    if (user) {
-      await updatePassword(user, newPassword);
-      api.logAction(user.uid, "UPDATE_PASSWORD", "User changed password");
-    } else {
-      throw new Error("No authenticated user found");
+  resendVerificationEmail: async (): Promise<void> => {
+    if (auth.currentUser) {
+      await sendEmailVerification(auth.currentUser);
     }
   },
 
   getCurrentUser: async (): Promise<User | null> => {
     return new Promise((resolve) => {
-      const unsubscribe = onAuthStateChanged(auth, async (user) => {
-        try {
-          if (user) {
-            const userDoc = await getDoc(doc(db, "users", user.uid));
-            if (userDoc.exists()) {
-              const u = normalizeUser(user.uid, userDoc.data(), user);
-              if (u.isBlocked) {
-                  await signOut(auth);
-                  resolve(null);
-                  return;
-              }
-              resolve(u);
-            } else {
-              resolve(null);
-            }
-          } else {
-            resolve(null);
-          }
-        } catch (e) {
-          console.error(e);
+      const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
+        unsubscribe();
+        if (fbUser) {
+          const user = await mapUser(fbUser);
+          resolve(user);
+        } else {
           resolve(null);
-        } finally {
-          unsubscribe();
         }
       });
     });
   },
 
-  getAllUsers: async (): Promise<User[]> => {
-    try {
-      const snap = await getDocs(collection(db, "users"));
-      // We don't have access to all Auth objects for bulk lists, 
-      // so emailVerified will be missing/false here, which is fine for Admin lists
-      return snap.docs.map((d) => normalizeUser(d.id, d.data(), null));
-    } catch (e) {
-      console.warn("getAllUsers failed (likely permission):", e);
-      return [];
+  refreshUserAuth: async (): Promise<User | null> => {
+    if (auth.currentUser) {
+       await auth.currentUser.reload();
+       return mapUser(auth.currentUser);
     }
+    return null;
   },
 
-  updateUser: async (updatedUser: User): Promise<void> => {
-    // Destructure to remove fields we don't want to save back to Firestore directly
-    const { emailVerified, id, ...dataToUpdate } = updatedUser;
-    
-    await updateDoc(doc(db, "users", id), dataToUpdate);
-    api.logAction(id, "UPDATE_PROFILE", "User profile updated", updatedUser.role);
+  updateUser: async (user: User): Promise<void> => {
+    const { id, ...data } = user;
+    await updateDoc(doc(db, "users", id), data);
   },
 
   deleteUser: async (userId: string): Promise<void> => {
+    // Note: This only deletes Firestore data. Deleting Auth user requires Cloud Functions or Admin SDK.
     await deleteDoc(doc(db, "users", userId));
-    try {
-      await deleteDoc(doc(db, "providers", userId));
-    } catch (e) {}
-    api.logAction("system", "DELETE_USER", `User ${userId} deleted by Admin`, "ADMIN", "critical");
+    await deleteDoc(doc(db, "providers", userId));
   },
 
-  // --- STORAGE ---
+  getAllUsers: async (): Promise<User[]> => {
+    const q = query(collection(db, "users"), orderBy("joinDate", "desc"));
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(d => ({ id: d.id, ...(d.data() as any) } as User));
+  },
 
-  uploadFile: async (file: File): Promise<string> => {
-    if (!auth.currentUser) {
-        throw new Error("You must be logged in to upload files.");
+  updateUserPassword: async (password: string): Promise<void> => {
+    if (auth.currentUser) {
+      await updatePassword(auth.currentUser, password);
+    } else {
+      throw new Error("No authenticated user.");
     }
+  },
 
-    // Completely sanitize filename
-    const extension = file.name.split('.').pop()?.toLowerCase() || 'bin';
-    const randomId = Math.random().toString(36).substring(2, 12);
-    const safeFileName = `${Date.now()}_${randomId}.${extension}`;
-    
-    console.log(`Starting upload: ${safeFileName} by user: ${auth.currentUser.uid}`); 
+  // --- SERVICE TYPES ---
 
-    // Force a token refresh to ensure we have valid auth credentials for Storage
+  getServiceTypes: async (): Promise<ServiceType[]> => {
     try {
-        await auth.currentUser.getIdToken(true);
-    } catch(e) {
-        console.warn("Failed to refresh token before upload", e);
-    }
-
-    const storageRef = ref(storage, `uploads/${safeFileName}`);
-    
-    // Explicitly set content type to help with access control and browser handling
-    const metadata = {
-        contentType: file.type || 'application/octet-stream',
-    };
-    
-    // Use uploadBytesResumable for better reliability on flaky connections (like mobile)
-    // and potentially better error handling from SDK
-    return new Promise((resolve, reject) => {
-        const uploadTask = uploadBytesResumable(storageRef, file, metadata);
-
-        uploadTask.on('state_changed',
-          (snapshot) => {
-            // Observe state change events such as progress, pause, and resume
-            const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-            console.log('Upload is ' + progress + '% done');
-          }, 
-          (error) => {
-            // Handle unsuccessful uploads
-            console.error("Upload failed in task:", error);
-            reject(error);
-          }, 
-          async () => {
-            // Handle successful uploads on complete
-            try {
-                const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
-                resolve(downloadURL);
-            } catch(e) {
-                reject(e);
-            }
+        const querySnapshot = await getDocs(collection(db, "service_types"));
+        let types = querySnapshot.docs.map(
+          (d) => {
+             const data = d.data();
+             return { id: d.id, ...(data as any) } as ServiceType;
           }
         );
-    });
+
+        if (types.length === 0) {
+           console.log("Seeding default service types...");
+           try {
+               const batch = writeBatch(db);
+               const createdTypes: ServiceType[] = [];
+               
+               for (const type of DEFAULT_SERVICE_TYPES) {
+                  const docRef = doc(collection(db, "service_types"));
+                  const typeData = { ...type };
+                  batch.set(docRef, typeData);
+                  createdTypes.push({ id: docRef.id, ...typeData } as ServiceType);
+               }
+               await batch.commit();
+               types = createdTypes;
+           } catch (err) {
+               console.warn("Failed to seed service types. DB might be read-only or offline.");
+               return [];
+           }
+        }
+        return types;
+    } catch (e) {
+        console.warn("Error fetching service types.", e);
+        return [];
+    }
   },
 
-  // --- REQUESTS & LEADS ---
+  manageServiceType: async (serviceType: ServiceType, action: 'add' | 'update'): Promise<void> => {
+    if (action === 'add') {
+      const { id, ...data } = serviceType;
+      // If ID looks generated by frontend, let firestore gen one, else use it
+      if (id.startsWith('srv_')) {
+        await addDoc(collection(db, "service_types"), data);
+      } else {
+        await setDoc(doc(db, "service_types", id), data);
+      }
+    } else {
+      const { id, ...data } = serviceType;
+      await updateDoc(doc(db, "service_types", id), data);
+    }
+  },
 
-  createRequest: async (
-    reqData: Omit<ServiceRequest, "id" | "status" | "quotes" | "createdAt">
-  ): Promise<ServiceRequest> => {
-    // Only use coordinates passed from the frontend (via Google Maps Grounding)
-    const coords = reqData.coordinates || null;
+  deleteServiceType: async (id: string): Promise<void> => {
+    await deleteDoc(doc(db, "service_types", id));
+  },
 
-    const newReqData = {
-      ...reqData,
-      status: "open",
+  // --- REQUESTS ---
+
+  getRequests: async (user: User): Promise<ServiceRequest[]> => {
+    let q;
+    if (user.role === UserRole.USER) {
+      q = query(collection(db, "requests"), where("userId", "==", user.id), orderBy("createdAt", "desc"));
+    } else {
+      // Admins and Providers see all (filtering done on client or advanced queries)
+      q = query(collection(db, "requests"), orderBy("createdAt", "desc"));
+    }
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(d => ({ id: d.id, ...(d.data() as any) } as ServiceRequest));
+  },
+
+  createRequest: async (data: any): Promise<void> => {
+    const req: Omit<ServiceRequest, 'id'> = {
+      ...data,
+      status: 'open',
       createdAt: new Date().toISOString(),
       quotes: [],
-      coordinates: coords,
-      isDeleted: false,
+      isDeleted: false
     };
-
-    const docRef = await addDoc(collection(db, "requests"), newReqData);
-    const savedReq = { id: docRef.id, ...newReqData } as ServiceRequest;
-
-    await distributeLeadsToProviders(savedReq);
-    
-    api.logAction(reqData.userId, "CREATE_REQUEST", `Created request: ${reqData.title}`, UserRole.USER);
-
-    return savedReq;
+    await addDoc(collection(db, "requests"), req);
+    await api.logAction(data.userId, "CREATE_REQUEST", `Created request: ${data.title}`, "USER", "info");
   },
 
-  getRequests: async (user?: User): Promise<ServiceRequest[]> => {
-    if (!user) return [];
-
-    try {
-      let qReq;
-
-      // We remove ALL orderBy clauses here to prevent Firestore index errors
-      // and perform sorting on the client side instead.
-      if (user.role === UserRole.USER) {
-        qReq = query(
-          collection(db, "requests"),
-          where("userId", "==", user.id)
-        );
-      } else if (user.role === UserRole.PROVIDER) {
-        qReq = query(
-          collection(db, "requests"),
-          where("status", "==", "open")
-        );
-      } else {
-        // Admin or other: fetch all
-        qReq = query(collection(db, "requests"));
-      }
-
-      const snap = await getDocs(qReq);
-      const results = snap.docs.map((d) =>
-        convertTimestamp({ id: d.id, ...(d.data() as any) })
-      ) as ServiceRequest[];
-
-      // Client-side sort to ensure correct order
-      return results.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-
-    } catch (error) {
-      console.error("Error fetching requests:", error);
-      return []; // Return empty on failure to prevent app crash
-    }
-  },
-
-  permanentDeleteRequest: async (requestId: string): Promise<void> => {
-    const user = auth.currentUser;
-    await deleteDoc(doc(db, "requests", requestId));
-    if(user) api.logAction(user.uid, "DELETE_REQUEST", `Request ${requestId} deleted`);
-  },
-
-  getProviderLeads: async (providerId: string): Promise<ServiceRequest[]> => {
-    try {
-      // NOTE: removed orderBy("createdAt", "desc") to avoid composite index error: status + createdAt
-      // Sort is handled client-side below.
-      const qReq = query(
-        collection(db, "requests"),
-        where("status", "==", "open")
-      );
-      const snap = await getDocs(qReq);
-      const leads = snap.docs.map((d) =>
-        convertTimestamp({ id: d.id, ...(d.data() as any) })
-      ) as ServiceRequest[];
-
-      // Sort client-side
-      leads.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-
-      const providerDoc = await getDoc(doc(db, "providers", providerId));
-      const provider = providerDoc.data() as ProviderProfile | undefined;
-
-      if (!provider) return [];
-
-      return leads.filter((req) => {
-        if (req.isDeleted) return false;
-        if (req.quotes.some((q) => q.providerId === providerId)) return false;
-
-        if (
-          provider.serviceTypes &&
-          provider.serviceTypes.length > 0 &&
-          !provider.serviceTypes.includes(req.category)
-        ) {
-          return false;
-        }
-        return true;
-      });
-    } catch (error) {
-      console.error("Error fetching provider leads:", error);
-      return [];
-    }
-  },
-
-  matchProviderToRequest: (
-    provider: ProviderProfile,
-    request: ServiceRequest
-  ): boolean => {
-    return isProviderEligibleForLead(provider, request);
-  },
-
-  shouldNotifyToRefineCriteria: (request: ServiceRequest): boolean => {
-    if (request.status !== "open") return false;
-    if (request.quotes.length >= MAX_QUOTES_PER_REQUEST) return false;
-    const timeElapsedMinutes =
-      (Date.now() - new Date(request.createdAt).getTime()) / 60000;
-    return timeElapsedMinutes > 10;
+  permanentDeleteRequest: async (id: string): Promise<void> => {
+    await deleteDoc(doc(db, "requests", id));
   },
 
   // --- QUOTES ---
 
-  submitQuote: async (
-    requestId: string,
-    provider: ProviderProfile,
-    quoteData: { price: number; timeline: string; description: string }
-  ): Promise<void> => {
-    const reqRef = doc(db, "requests", requestId);
-    const reqSnap = await getDoc(reqRef);
-    if (!reqSnap.exists()) throw new Error("Request not found");
-
-    const request = reqSnap.data() as ServiceRequest;
-
-    const newQuote: Quote = {
-      id: `q_${Date.now()}`,
+  submitQuote: async (requestId: string, provider: ProviderProfile, quoteData: any): Promise<void> => {
+    const quote: Quote = {
+      id: `quote_${Date.now()}`,
       providerId: provider.id,
       providerName: provider.name,
-      verified: provider.isVerified,
+      ...quoteData,
+      currency: 'AED',
       rating: provider.rating,
-      price: quoteData.price,
-      currency: "AED",
-      timeline: quoteData.timeline,
-      description: quoteData.description,
-      status: "pending",
+      verified: provider.isVerified,
+      status: 'pending'
     };
-
-    const updatedQuotes = [...(request.quotes || []), newQuote];
-
+    
+    const reqRef = doc(db, "requests", requestId);
     await updateDoc(reqRef, {
-      quotes: updatedQuotes,
-      status: "quoted",
+      status: 'quoted',
+      quotes: arrayUnion(quote)
     });
 
-    await api.createNotification({
-      userId: request.userId,
-      type: "info",
-      title: "New Quote",
-      message: `${provider.name} sent a quote of AED ${quoteData.price}`,
-      link: "dashboard",
-    });
-
-    api.logAction(provider.id, "SUBMIT_QUOTE", `Submitted quote for request: ${request.title}`, UserRole.PROVIDER);
+    await api.logAction(provider.id, "SUBMIT_QUOTE", `Submitted quote for request ${requestId}`, "PROVIDER", "info");
   },
 
   acceptQuote: async (requestId: string, quoteId: string): Promise<void> => {
@@ -653,457 +270,293 @@ export const api = {
     const reqSnap = await getDoc(reqRef);
     if (!reqSnap.exists()) return;
 
-    const request = reqSnap.data() as ServiceRequest;
-    const updatedQuotes = request.quotes.map((q: Quote) => {
-      if (q.id === quoteId) {
-        api.createNotification({
-          userId: q.providerId,
-          type: "success",
-          title: "Quote Accepted",
-          message: `Your quote for "${request.title}" was accepted.`,
-          link: "dashboard",
-        });
-        return { ...q, status: "accepted" };
-      }
-      return { ...q, status: "rejected" };
-    });
+    const data = reqSnap.data() as ServiceRequest;
+    const updatedQuotes = data.quotes.map(q => 
+      q.id === quoteId ? { ...q, status: 'accepted' as const } : { ...q, status: 'rejected' as const }
+    );
 
     await updateDoc(reqRef, {
-      quotes: updatedQuotes,
-      status: "accepted",
+      status: 'accepted',
+      quotes: updatedQuotes
     });
-
-    api.logAction(request.userId, "ACCEPT_QUOTE", `Accepted quote from provider for request: ${request.title}`, UserRole.USER);
   },
 
   completeOrder: async (requestId: string): Promise<void> => {
-    await updateDoc(doc(db, "requests", requestId), { status: "closed" });
-    const user = auth.currentUser;
-    if(user) api.logAction(user.uid, "COMPLETE_ORDER", `Order completed for request ${requestId}`);
+    const reqRef = doc(db, "requests", requestId);
+    await updateDoc(reqRef, {
+      status: 'closed'
+    });
   },
 
   // --- PROVIDERS ---
 
   getProviders: async (): Promise<ProviderProfile[]> => {
-    try {
-      const snap = await getDocs(collection(db, "providers"));
-      return snap.docs.map(
-        (d) => ({ id: d.id, ...(d.data() as any) } as ProviderProfile)
-      );
-    } catch (error) {
-      console.warn("Error fetching providers (permission/network):", error);
-      return [];
-    }
+    const snapshot = await getDocs(collection(db, "providers"));
+    return snapshot.docs.map(d => ({ id: d.id, ...(d.data() as any) } as ProviderProfile));
   },
 
-  updateProvider: async (
-    providerId: string,
-    updates: Partial<ProviderProfile>
-  ): Promise<ProviderProfile> => {
-    const provRef = doc(db, "providers", providerId);
-    let newCoords: Coordinates | undefined = updates.coordinates;
-
-    const dataToUpdate: any = { ...updates };
-    // If coordinates are explicitly passed (even if null/undefined to clear), use them
-    if (updates.coordinates !== undefined) {
-       dataToUpdate.coordinates = updates.coordinates;
-    }
-
-    await updateDoc(provRef, dataToUpdate);
-    const snap = await getDoc(provRef);
-    
-    api.logAction(providerId, "UPDATE_STOREFRONT", "Provider updated storefront details", UserRole.PROVIDER);
-    
-    return { id: snap.id, ...(snap.data() || {}) } as ProviderProfile;
+  updateProvider: async (id: string, data: any): Promise<void> => {
+    await updateDoc(doc(db, "providers", id), data);
   },
 
-  toggleProviderVerification: async (providerId: string): Promise<void> => {
-    const provRef = doc(db, "providers", providerId);
-    const snap = await getDoc(provRef);
-    const admin = auth.currentUser;
-    if (snap.exists()) {
-      const current = (snap.data() as any)?.isVerified;
-      await updateDoc(provRef, { isVerified: !current });
-      api.logAction(admin?.uid || 'admin', "TOGGLE_VERIFY", `Provider ${providerId} verification toggled to ${!current}`, "ADMIN");
+  toggleProviderVerification: async (id: string): Promise<void> => {
+    const ref = doc(db, "providers", id);
+    const snap = await getDoc(ref);
+    if(snap.exists()) {
+       const current = snap.data().isVerified;
+       await updateDoc(ref, { isVerified: !current });
     }
   },
 
   // --- REVIEWS ---
 
-  addReview: async (
-    providerId: string,
-    reviewData: Omit<Review, "id" | "date">
-  ): Promise<void> => {
-    const provRef = doc(db, "providers", providerId);
-    const snap = await getDoc(provRef);
-    if (!snap.exists()) return;
-
-    const provider = snap.data() as ProviderProfile;
-    const newReview: Review = {
-      id: `r_${Date.now()}`,
-      date: new Date().toISOString(),
-      ...reviewData,
+  addReview: async (providerId: string, reviewData: any): Promise<void> => {
+    const review: Review = {
+       id: `rev_${Date.now()}`,
+       date: new Date().toISOString(),
+       ...reviewData
     };
-
-    const updatedReviews = [newReview, ...(provider.reviews || [])];
-    const newCount = updatedReviews.length;
-    const newRating =
-      updatedReviews.reduce((acc, r) => acc + r.rating, 0) / newCount;
-
-    await updateDoc(provRef, {
-      reviews: updatedReviews,
-      reviewCount: newCount,
-      rating: newRating,
-    });
     
-    const user = auth.currentUser;
-    if(user) api.logAction(user.uid, "ADD_REVIEW", `Review added for provider ${provider.name}`, UserRole.USER);
+    const provRef = doc(db, "providers", providerId);
+    const provSnap = await getDoc(provRef);
+    
+    if (provSnap.exists()) {
+       const prov = provSnap.data() as ProviderProfile;
+       const newCount = prov.reviewCount + 1;
+       const newRating = ((prov.rating * prov.reviewCount) + review.rating) / newCount;
+       
+       await updateDoc(provRef, {
+          reviews: arrayUnion(review),
+          reviewCount: newCount,
+          rating: newRating
+       });
+    }
   },
 
-  deleteReview: async (
-    providerId: string,
-    reviewId: string
-  ): Promise<void> => {
-    const provRef = doc(db, "providers", providerId);
-    const snap = await getDoc(provRef);
-    if (!snap.exists()) return;
+  deleteReview: async (providerId: string, reviewId: string): Promise<void> => {
+      const provRef = doc(db, "providers", providerId);
+      const provSnap = await getDoc(provRef);
+      if(provSnap.exists()) {
+          const prov = provSnap.data() as ProviderProfile;
+          const review = prov.reviews.find(r => r.id === reviewId);
+          if(!review) return;
 
-    const provider = snap.data() as ProviderProfile;
-    const updatedReviews = (provider.reviews || []).filter(
-      (r: Review) => r.id !== reviewId
-    );
-    const newCount = updatedReviews.length;
-    const newRating =
-      newCount > 0
-        ? updatedReviews.reduce((acc, r) => acc + r.rating, 0) / newCount
-        : 0;
+          const newCount = Math.max(0, prov.reviewCount - 1);
+          let newRating = 0;
+          if (newCount > 0) {
+             newRating = ((prov.rating * prov.reviewCount) - review.rating) / newCount;
+          }
 
-    await updateDoc(provRef, {
-      reviews: updatedReviews,
-      reviewCount: newCount,
-      rating: newRating,
-    });
-    
-    const user = auth.currentUser;
-    if(user) api.logAction(user.uid, "DELETE_REVIEW", `Review ${reviewId} removed`, "ADMIN", "warning");
+          await updateDoc(provRef, {
+              reviews: arrayRemove(review),
+              reviewCount: newCount,
+              rating: newRating
+          });
+      }
   },
 
   // --- MESSAGES ---
 
-  getMessages: async (
-    userId: string,
-    otherUserId: string
-  ): Promise<DirectMessage[]> => {
-    try {
-      // Split into two specific queries to comply with standard security rules (read own messages)
-      // Query 1: Messages where I am the sender
-      const qSent = query(
-        collection(db, "messages"),
-        where("senderId", "==", userId),
-        where("recipientId", "==", otherUserId)
-      );
-      
-      // Query 2: Messages where I am the recipient
-      const qReceived = query(
-        collection(db, "messages"),
-        where("senderId", "==", otherUserId),
-        where("recipientId", "==", userId)
-      );
-
-      const [sentSnap, receivedSnap] = await Promise.all([getDocs(qSent), getDocs(qReceived)]);
-      
-      const sent = sentSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) } as DirectMessage));
-      const received = receivedSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) } as DirectMessage));
-
-      // Merge and sort
-      return [...sent, ...received].sort((a, b) => a.timestamp - b.timestamp);
-    } catch (error) {
-      console.warn("Error fetching messages:", error);
-      return [];
-    }
-  },
-
-  sendMessage: async (
-    senderId: string,
-    recipientId: string,
-    content: string
-  ): Promise<void> => {
-    await addDoc(collection(db, "messages"), {
-      senderId,
-      recipientId,
-      content,
-      timestamp: Date.now(),
-      read: false,
-    });
-
-    const senderDoc = await getDoc(doc(db, "users", senderId));
-    const sender = senderDoc.data() as User | undefined;
-
-    await api.createNotification({
-      userId: recipientId,
-      type: "info",
-      title: "New Message",
-      message: `Message from ${sender?.name || "User"}`,
-      link: "messages",
-    });
-
-    api.logAction(senderId, "SEND_MESSAGE", `Sent message to user ${recipientId}`, sender?.role || UserRole.USER);
-  },
-
   getConversations: async (userId: string): Promise<Conversation[]> => {
-    try {
-      // Fetch both sent and received messages to build conversation list
-      // This respects security rules better than querying *all* messages sorted by timestamp
-      const qSent = query(collection(db, "messages"), where("senderId", "==", userId));
-      const qReceived = query(collection(db, "messages"), where("recipientId", "==", userId));
-
-      const [sentSnap, receivedSnap] = await Promise.all([getDocs(qSent), getDocs(qReceived)]);
-      
-      const allMessages = [
-        ...sentSnap.docs.map(d => d.data() as DirectMessage),
-        ...receivedSnap.docs.map(d => d.data() as DirectMessage)
-      ].sort((a, b) => b.timestamp - a.timestamp); // Descending for latest first
-
-      const conversationsMap = new Map<string, DirectMessage[]>();
-      allMessages.forEach((m) => {
-        const otherId = m.senderId === userId ? m.recipientId : m.senderId;
-        if (!conversationsMap.has(otherId)) conversationsMap.set(otherId, []);
-        conversationsMap.get(otherId)!.push(m);
-      });
-
-      const usersSnap = await getDocs(collection(db, "users"));
-      const users = usersSnap.docs.map(
-        (d) => ({ id: d.id, ...(d.data() as User) })
-      );
-
-      const conversations: Conversation[] = [];
-      conversationsMap.forEach((msgs, otherId) => {
-        const last = msgs[0];
-        const otherUser = users.find((u) => u.id === otherId);
-        const unread = msgs.filter(
-          (m) => m.recipientId === userId && !m.read
-        ).length;
-
-        conversations.push({
-          otherUserId: otherId,
-          otherUserName: otherUser?.name || "Unknown",
-          lastMessage: last.content,
-          timestamp: last.timestamp,
-          unreadCount: unread,
-        });
-      });
-
-      return conversations;
-    } catch (error) {
-      console.warn("Error fetching conversations:", error);
-      return [];
+    // This is a simplified fetch. Real implementation would require a dedicated collection for chats.
+    // We will query unique senders/recipients from messages collection for demo.
+    const sentQ = query(collection(db, "messages"), where("senderId", "==", userId));
+    const recQ = query(collection(db, "messages"), where("recipientId", "==", userId));
+    
+    const [sentSnap, recSnap] = await Promise.all([getDocs(sentQ), getDocs(recQ)]);
+    const messages = [...sentSnap.docs, ...recSnap.docs].map(d => d.data() as DirectMessage);
+    
+    // Group by other user
+    const map = new Map<string, Conversation>();
+    
+    messages.sort((a,b) => a.timestamp - b.timestamp);
+    
+    messages.forEach(m => {
+        const isMe = m.senderId === userId;
+        const otherId = isMe ? m.recipientId : m.senderId;
+        // In a real app, use user cache or fetch it
+        const conv = map.get(otherId) || { 
+            otherUserId: otherId, 
+            otherUserName: 'User', // Would need fetch
+            lastMessage: '',
+            timestamp: 0,
+            unreadCount: 0
+        };
+        conv.lastMessage = m.content;
+        conv.timestamp = m.timestamp;
+        if (!isMe && !m.read) conv.unreadCount++;
+        map.set(otherId, conv);
+    });
+    
+    // Fetch names for conversations
+    const convos = Array.from(map.values());
+    for (const c of convos) {
+        const u = await getDoc(doc(db, "users", c.otherUserId));
+        if (u.exists()) c.otherUserName = u.data().name;
     }
+    
+    return convos.sort((a, b) => b.timestamp - a.timestamp);
+  },
+
+  getMessages: async (userId: string, otherId: string): Promise<DirectMessage[]> => {
+      // Simplistic query: (sender==A && recipient==B) OR (sender==B && recipient==A)
+      // Firestore doesn't support OR queries natively in this way easily without composite indexes or multiple queries.
+      const q1 = query(collection(db, "messages"), where("senderId", "==", userId), where("recipientId", "==", otherId));
+      const q2 = query(collection(db, "messages"), where("senderId", "==", otherId), where("recipientId", "==", userId));
+      
+      const [s1, s2] = await Promise.all([getDocs(q1), getDocs(q2)]);
+      const allMsgs = [...s1.docs, ...s2.docs].map(d => ({id: d.id, ...d.data()} as DirectMessage));
+      
+      // Mark as read
+      const batch = writeBatch(db);
+      s2.docs.forEach(d => {
+          if (!d.data().read) batch.update(d.ref, { read: true });
+      });
+      await batch.commit();
+
+      return allMsgs.sort((a, b) => a.timestamp - b.timestamp);
+  },
+
+  sendMessage: async (senderId: string, recipientId: string, content: string): Promise<void> => {
+      const msg: Omit<DirectMessage, 'id'> = {
+          senderId,
+          recipientId,
+          content,
+          timestamp: Date.now(),
+          read: false
+      };
+      await addDoc(collection(db, "messages"), msg);
   },
 
   // --- NOTIFICATIONS ---
 
   getNotifications: async (userId: string): Promise<Notification[]> => {
-    try {
-      // Removed orderBy("timestamp", "desc") to rely on client-side sorting and avoid potential index issues
-      const qNotif = query(
-        collection(db, "notifications"),
-        where("userId", "==", userId)
-      );
-      const snap = await getDocs(qNotif);
-      const notifs = snap.docs.map(
-        (d) => ({ id: d.id, ...(d.data() as any) } as Notification)
-      );
-      return notifs.sort((a, b) => b.timestamp - a.timestamp);
-    } catch (error) {
-      console.warn("Error fetching notifications:", error);
-      return [];
-    }
+    const q = query(collection(db, "notifications"), where("userId", "==", userId), orderBy("timestamp", "desc"), limit(20));
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(d => ({ id: d.id, ...(d.data() as any) } as Notification));
   },
 
-  createNotification: async (
-    data: Omit<Notification, "id" | "timestamp" | "read">
-  ) => {
-    await addDoc(collection(db, "notifications"), {
-      ...data,
-      timestamp: Date.now(),
-      read: false,
-    });
+  markNotificationAsRead: async (id: string): Promise<void> => {
+    await updateDoc(doc(db, "notifications", id), { read: true });
   },
 
-  markNotificationAsRead: async (notificationId: string) => {
-    await updateDoc(doc(db, "notifications", notificationId), { read: true });
-  },
-
-  markAllNotificationsAsRead: async (userId: string) => {
-    const qNotif = query(
-      collection(db, "notifications"),
-      where("userId", "==", userId),
-      where("read", "==", false)
-    );
-    const snap = await getDocs(qNotif);
-
+  markAllNotificationsAsRead: async (userId: string): Promise<void> => {
+    const q = query(collection(db, "notifications"), where("userId", "==", userId), where("read", "==", false));
+    const snapshot = await getDocs(q);
     const batch = writeBatch(db);
-    snap.docs.forEach((d) => {
-      batch.update(d.ref, { read: true });
-    });
+    snapshot.docs.forEach(d => batch.update(d.ref, { read: true }));
     await batch.commit();
   },
 
-  broadcastNotification: async (title: string, message: string) => {
-    const users = await api.getAllUsers();
-    const batch = writeBatch(db);
-
-    users.forEach((u) => {
-      const refDoc = doc(collection(db, "notifications"));
-      batch.set(refDoc, {
-        userId: u.id,
-        type: "info",
-        title,
-        message,
-        timestamp: Date.now(),
-        read: false,
+  broadcastNotification: async (title: string, message: string): Promise<void> => {
+      // 1. Log the action
+      await api.logAction("system", "BROADCAST", `Sent: ${title}`, "ADMIN", "info");
+      
+      // 2. Fetch all users to create individual notifications
+      // Note: In production, this loop should be handled by a Cloud Function to scale.
+      const usersSnap = await getDocs(collection(db, "users"));
+      const batch = writeBatch(db);
+      
+      let operationCount = 0;
+      
+      usersSnap.docs.forEach(userDoc => {
+          const newNotifRef = doc(collection(db, "notifications"));
+          const notification: Omit<Notification, 'id'> = {
+              userId: userDoc.id,
+              type: 'info',
+              title: title,
+              message: message,
+              timestamp: Date.now(),
+              read: false,
+              link: 'dashboard'
+          };
+          batch.set(newNotifRef, notification);
+          operationCount++;
+          
+          // Firestore batches are limited to 500 operations.
+          // For this frontend-only implementation, we assume < 500 users for now.
+          // A real implementation would chunk this.
       });
-    });
 
-    await batch.commit();
-    api.logAction("admin", "BROADCAST", `Sent broadcast: ${title}`, "ADMIN", "warning");
+      if (operationCount > 0) {
+          await batch.commit();
+      }
   },
 
-  // --- ADMIN & SETTINGS ---
+  // --- SETTINGS ---
 
   getSettings: async (): Promise<SiteSettings> => {
-    try {
-      const snap = await getDoc(doc(db, "settings", "global"));
-      return snap.exists()
-        ? (snap.data() as SiteSettings)
-        : {
-            siteName: "DubaiLink",
-            contactEmail: "support@dubailink.ae",
-            maintenanceMode: false,
-            allowNewRegistrations: true,
-          };
-    } catch (e) {
-      return {
-        siteName: "DubaiLink",
-        contactEmail: "support@dubailink.ae",
-        maintenanceMode: false,
-        allowNewRegistrations: true,
-      };
-    }
+    const docRef = doc(db, "settings", "global");
+    const snapshot = await getDoc(docRef);
+    if (snapshot.exists()) return snapshot.data() as SiteSettings;
+    return {
+       siteName: 'DubaiLink',
+       contactEmail: 'support@dubailink.uae',
+       maintenanceMode: false,
+       allowNewRegistrations: true
+    };
   },
 
   updateSettings: async (settings: SiteSettings): Promise<void> => {
     await setDoc(doc(db, "settings", "global"), settings);
-    api.logAction("admin", "UPDATE_SETTINGS", "Updated site settings", "ADMIN", "warning");
   },
 
-  getServiceTypes: async (): Promise<ServiceType[]> => {
-    try {
-      const snap = await getDocs(collection(db, "service_types"));
-      return snap.docs.map(
-        (d) => ({ id: d.id, ...(d.data() as any) } as ServiceType)
-      );
-    } catch (error) {
-      console.warn("Error fetching service types:", error);
-      return [];
-    }
-  },
+  // --- LOGGING & AUDIT ---
 
-  manageServiceType: async (
-    type: ServiceType,
-    action: "add" | "update"
-  ): Promise<void> => {
-    await setDoc(doc(db, "service_types", type.id), type);
-    api.logAction("admin", action === 'add' ? "ADD_SERVICE" : "UPDATE_SERVICE", `Service type: ${type.name}`, "ADMIN");
-  },
-
-  deleteServiceType: async (id: string): Promise<void> => {
-    await deleteDoc(doc(db, "service_types", id));
-    api.logAction("admin", "DELETE_SERVICE", `Deleted service type ${id}`, "ADMIN", "warning");
+  logAction: async (adminId: string, action: string, details: string, userRole = 'SYSTEM', severity: 'info' | 'warning' | 'critical' = 'info'): Promise<void> => {
+    await addDoc(collection(db, "audit_logs"), {
+        adminId, action, details, userRole, severity, timestamp: Date.now()
+    });
   },
 
   getAuditLogs: async (): Promise<AuditLog[]> => {
-    try {
-      // Client sort for logs too
-      const qLogs = query(collection(db, "audit_logs"));
-      const snap = await getDocs(qLogs);
-      const logs = snap.docs.map(
-        (d) => ({ id: d.id, ...(d.data() as any) } as AuditLog)
-      );
-      return logs.sort((a, b) => b.timestamp - a.timestamp);
-    } catch (error) {
-      console.warn("Error fetching audit logs:", error);
-      return [];
-    }
+    const q = query(collection(db, "audit_logs"), orderBy("timestamp", "desc"), limit(100));
+    const snap = await getDocs(q);
+    return snap.docs.map(d => ({ id: d.id, ...(d.data() as any) } as AuditLog));
   },
 
-  // Generic logging for ALL users, not just admins
-  logAction: async (
-    userId: string,
-    action: string,
-    details: string,
-    userRole?: string,
-    severity: "info" | "warning" | "critical" = "info"
-  ) => {
-    try {
-      // Manual ID generation to prevent "Document already exists" errors with addDoc in some environments
-      const logId = `log_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      await setDoc(doc(db, "audit_logs", logId), {
-        action,
-        details,
-        severity,
-        adminId: userId, // Keeping field name 'adminId' for compat, but it's really 'actorId'
-        userRole: userRole || 'UNKNOWN',
-        timestamp: Date.now(),
-      });
-    } catch (e) {
-      console.error("Failed to log action", e);
-    }
-  },
-
-  // --- AI INTERACTIONS ---
-  logAiQuery: async (userId: string, userName: string, queryText: string) => {
-    try {
-        // We log to audit_logs instead of ai_logs to avoid permission errors with new collections
-        // and to keep a unified log.
-        // We distinguish Guest users by setting userRole to 'GUEST'
-        const role = userId.startsWith('guest_') ? 'GUEST' : 'USER';
-        const logId = `ai_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        
-        await setDoc(doc(db, "audit_logs", logId), {
-            action: "AI_QUERY",
-            details: queryText,
-            adminId: userId,
-            userName: userName, // Storing user name for easier display
-            userRole: role,
-            severity: "info",
-            timestamp: Date.now()
-        });
-    } catch (e) {
-        // We catch strictly here to ensure AI functionality doesn't break if logging fails due to strict rules
-        console.error("Failed to log AI query (likely permissions or network)", e);
-    }
+  logAiQuery: async (userId: string, userName: string, queryText: string): Promise<void> => {
+     await addDoc(collection(db, "ai_logs"), {
+         userId, userName, query: queryText, timestamp: Date.now()
+     });
   },
 
   getAiInteractions: async (): Promise<AiInteraction[]> => {
-    try {
-        // Query audit_logs for AI_QUERY actions. This assumes the Admin is authenticated and has read access.
-        const qLogs = query(collection(db, "audit_logs"), where("action", "==", "AI_QUERY"));
-        const snap = await getDocs(qLogs);
-        const logs = snap.docs.map(d => {
-            const data = d.data();
-            return {
-                id: d.id,
-                userId: data.adminId,
-                userName: data.userName || (data.userRole === 'GUEST' ? 'Guest User' : 'User'),
-                query: data.details, // The query is stored in details field
-                timestamp: data.timestamp
-            } as AiInteraction;
-        });
-        return logs.sort((a, b) => b.timestamp - a.timestamp);
-    } catch (e) {
-        console.error("Failed to fetch AI logs", e);
-        return [];
-    }
+      const q = query(collection(db, "ai_logs"), orderBy("timestamp", "desc"), limit(100));
+      const snap = await getDocs(q);
+      return snap.docs.map(d => ({ id: d.id, ...(d.data() as any) } as AiInteraction));
+  },
+
+  // --- FILES ---
+
+  uploadFile: async (file: File, folder = 'uploads'): Promise<string> => {
+     // Create a unique path with optional folder support
+     const storageRef = ref(storage, `${folder}/${Date.now()}_${file.name}`);
+     await uploadBytes(storageRef, file);
+     return await getDownloadURL(storageRef);
+  },
+
+  // --- HELPERS ---
+
+  matchProviderToRequest: (provider: ProviderProfile, request: ServiceRequest): boolean => {
+      // 1. Check if provider supports the category
+      const hasCategory = provider.serviceTypes?.includes(request.category);
+      if (!hasCategory) return false;
+      
+      // 2. Check location proximity (string match for now)
+      if (request.locality && provider.location) {
+         // Simple check: if provider location string is part of request locality or vice versa
+         // In a real app, use Geo queries.
+         // For now, if provider is in 'Dubai' generally, we might allow it unless request is very specific
+         return true;
+      }
+      
+      return true;
+  },
+
+  shouldNotifyToRefineCriteria: (req: ServiceRequest): boolean => {
+      const hoursSincePost = (Date.now() - new Date(req.createdAt).getTime()) / (1000 * 60 * 60);
+      // Notify if older than 24 hours and no quotes
+      return hoursSincePost > 24 && req.quotes.length === 0;
   }
 };

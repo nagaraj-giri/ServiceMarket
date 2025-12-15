@@ -95,31 +95,45 @@ const App: React.FC = () => {
 
   // --- DATA LOADING ---
   const loadUserData = async (currentUser: User) => {
-    try {
-      const msgs = await api.getConversations(currentUser.id);
-      setConversations(msgs);
-      const notifs = await api.getNotifications(currentUser.id);
-      setNotifications(notifs);
+    // We run requests in parallel but catch errors independently so one failure (e.g. notifications index error)
+    // does not prevent the other data (e.g. requests) from loading.
+    
+    // 1. Conversations
+    api.getConversations(currentUser.id)
+      .then(setConversations)
+      .catch(e => console.error("Failed to load conversations:", e));
 
-      if (currentUser.role === UserRole.USER) {
-         const reqs = await api.getRequests(currentUser);
-         setRequests(reqs);
-      } else if (currentUser.role === UserRole.PROVIDER) {
-         // Load all requests (leads will be filtered in component)
-         const allReqs = await api.getRequests({ role: UserRole.ADMIN } as User); 
-         setRequests(allReqs);
-         const myProfile = await api.getProviders();
-         setProviders(myProfile); // Load all to find self
-      } else if (currentUser.role === UserRole.ADMIN) {
-         const allReqs = await api.getRequests({ role: UserRole.ADMIN } as User);
-         setRequests(allReqs);
-         const allUsers = await api.getAllUsers();
-         setAdminUsers(allUsers);
-         const allProvs = await api.getProviders();
-         setProviders(allProvs);
-      }
-    } catch (e) {
-      console.error("Failed to load user data", e);
+    // 2. Notifications
+    api.getNotifications(currentUser.id)
+      .then(setNotifications)
+      .catch(e => console.error("Failed to load notifications (Check indexes):", e));
+
+    // 3. Requests & Role Specific Data
+    if (currentUser.role === UserRole.USER) {
+       await api.getRequests(currentUser)
+         .then(setRequests)
+         .catch(e => console.error("Failed to load requests:", e));
+    } else if (currentUser.role === UserRole.PROVIDER) {
+       // Load all requests (leads will be filtered in component)
+       api.getRequests({ role: UserRole.ADMIN } as User)
+         .then(setRequests)
+         .catch(e => console.error("Failed to load provider requests:", e));
+         
+       api.getProviders()
+         .then(setProviders) // Load all to find self
+         .catch(e => console.error("Failed to load providers:", e));
+    } else if (currentUser.role === UserRole.ADMIN) {
+       api.getRequests({ role: UserRole.ADMIN } as User)
+         .then(setRequests)
+         .catch(e => console.error("Failed to load admin requests:", e));
+       
+       api.getAllUsers()
+         .then(setAdminUsers)
+         .catch(e => console.error("Failed to load users:", e));
+       
+       api.getProviders()
+         .then(setProviders)
+         .catch(e => console.error("Failed to load providers:", e));
     }
   };
 
@@ -244,124 +258,112 @@ const App: React.FC = () => {
            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
               
               {/* Hero Banner */}
-              <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-dubai-dark to-gray-800 text-white shadow-lg p-6 sm:p-10 min-h-[280px] flex items-center">
+              <div className="relative overflow-hidden rounded-2xl bg-dubai-dark text-white shadow-lg p-8 sm:p-12 min-h-[300px] flex items-center">
                  {siteSettings.heroImage && (
                     <>
-                        <div className="absolute inset-0 bg-black/40 z-0"></div>
+                        <div className="absolute inset-0 bg-black/50 z-0"></div>
                         <img src={siteSettings.heroImage} alt="Hero" className="absolute inset-0 w-full h-full object-cover -z-10" />
                     </>
                  )}
                  {!siteSettings.heroImage && (
                     <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full -mr-20 -mt-20 blur-3xl"></div>
                  )}
-                 <div className="relative z-10 max-w-lg">
-                    <span className="text-[10px] font-bold bg-dubai-gold/20 text-dubai-gold px-2 py-0.5 rounded uppercase tracking-wide">Trending</span>
-                    <h2 className="text-2xl sm:text-4xl font-bold mt-2 mb-2">{siteSettings.heroTitle || "Golden Visa AE"}</h2>
-                    <p className="text-gray-300 text-sm sm:text-base mb-6">{siteSettings.heroSubtitle || "Secure your 10-year residency today with expert guidance."}</p>
-                    <button 
-                       onClick={() => openRequestForm(ServiceCategory.VISA)}
-                       className="bg-dubai-gold text-white text-sm font-bold px-6 py-3 rounded-xl hover:bg-yellow-600 transition-colors shadow-lg"
-                    >
-                       {siteSettings.heroButtonText || "Post Request"}
-                    </button>
+                 <div className="relative z-10 max-w-2xl">
+                    {/* Trending Tag */}
+                    <div className="mb-4">
+                        <span className="bg-[#3D3525] text-[#C5A059] text-xs font-bold px-2 py-1 rounded uppercase tracking-wider">Trending</span>
+                    </div>
+                    <h2 className="text-3xl sm:text-5xl font-bold mb-4 tracking-tight">{siteSettings.heroTitle || "Golden Visa AE"}</h2>
+                    <p className="text-gray-200 text-lg mb-8 max-w-xl leading-relaxed">{siteSettings.heroSubtitle || "Secure your 10-year residency today with expert guidance."}</p>
+                    <div className="flex gap-3">
+                        <button 
+                           onClick={() => openRequestForm(ServiceCategory.VISA)}
+                           className="bg-dubai-gold text-white text-base font-bold px-8 py-3 rounded-lg hover:bg-yellow-600 transition-colors shadow-lg"
+                        >
+                           {siteSettings.heroButtonText || "Post Request"}
+                        </button>
+                    </div>
                  </div>
               </div>
 
-              {/* Service Categories */}
-              <div>
-                 <h3 className="text-lg font-bold text-gray-900 mb-4">Browse Services</h3>
+              {/* Service Categories - Matching Screenshot */}
+              <div className="py-4">
+                 <h3 className="text-xl font-bold text-gray-900 mb-6">Browse Services</h3>
                  
-                 {/* Desktop View */}
-                 <div className="hidden md:grid grid-cols-4 gap-4">
-                    {serviceTypes.length > 0 ? serviceTypes.filter(s => s.isActive).map(s => (
-                        <div key={s.id} onClick={() => openRequestForm(s.name)} className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center text-center hover:bg-gray-50 cursor-pointer transition-all hover:-translate-y-1">
-                           <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-3 ${
-                               s.name.toLowerCase().includes('visa') ? 'bg-blue-50 text-blue-600' :
-                               s.name.toLowerCase().includes('business') ? 'bg-purple-50 text-purple-600' :
-                               'bg-green-50 text-green-600'
-                           }`}>
-                               {s.name.toLowerCase().includes('visa') ? (
-                                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" /></svg>
-                               ) : s.name.toLowerCase().includes('business') ? (
-                                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
-                               ) : (
-                                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
-                               )}
-                           </div>
-                           <span className="text-sm font-bold text-gray-900">{s.name}</span>
-                           <span className="text-xs text-gray-500 mt-1">{s.description}</span>
-                        </div>
-                    )) : (
-                        // Static Fallback
-                        <>
-                           <div onClick={() => openRequestForm(ServiceCategory.VISA)} className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center text-center hover:bg-gray-50 cursor-pointer">
-                              <span className="text-sm font-bold">Visas</span>
-                           </div>
-                           <div onClick={() => openRequestForm(ServiceCategory.BUSINESS)} className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center text-center hover:bg-gray-50 cursor-pointer">
-                              <span className="text-sm font-bold">Business Setup</span>
-                           </div>
-                        </>
-                    )}
-                 </div>
+                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
+                    {serviceTypes.length > 0 && serviceTypes.filter(s => s.isActive).map(s => {
+                        const name = s.name.toLowerCase();
+                        
+                        // Icon mapping based on text matching
+                        let icon = null;
+                        let colorClass = 'text-green-600 bg-green-50'; // Default Green (as per screenshot mostly)
 
-                 {/* Mobile View - 2 Row Horizontal Scroll */}
-                 <div className="md:hidden grid grid-rows-2 grid-flow-col gap-3 overflow-x-auto pb-4 hide-scrollbar snap-x snap-mandatory">
-                    {serviceTypes.length > 0 ? serviceTypes.filter(s => s.isActive).map(s => (
-                        <div key={s.id} onClick={() => openRequestForm(s.name)} className="w-[160px] bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center text-center active:bg-gray-50 transition-colors snap-start cursor-pointer">
-                           <div className={`w-10 h-10 rounded-full flex items-center justify-center mb-2 ${
-                               s.name.toLowerCase().includes('visa') ? 'bg-blue-50 text-blue-600' :
-                               s.name.toLowerCase().includes('business') ? 'bg-purple-50 text-purple-600' :
-                               'bg-green-50 text-green-600'
-                           }`}>
-                               {s.name.toLowerCase().includes('visa') ? (
-                                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" /></svg>
-                               ) : s.name.toLowerCase().includes('business') ? (
-                                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
-                               ) : (
-                                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
-                               )}
-                           </div>
-                           <span className="text-sm font-bold text-gray-800 line-clamp-1 w-full">{s.name}</span>
-                           <span className="text-[10px] text-gray-400 line-clamp-1 w-full">{s.description}</span>
-                        </div>
-                    )) : (
-                        // Static Fallback Mobile
-                        <>
-                           <div onClick={() => openRequestForm(ServiceCategory.VISA)} className="w-[160px] bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center text-center active:bg-gray-50 transition-colors snap-start cursor-pointer">
-                              <div className="w-10 h-10 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center mb-2"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" /></svg></div>
-                              <span className="text-sm font-bold text-gray-800">Visas</span>
-                              <span className="text-[10px] text-gray-400">Residency & Entry</span>
-                           </div>
-                           <div onClick={() => openRequestForm(ServiceCategory.BUSINESS)} className="w-[160px] bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center text-center active:bg-gray-50 transition-colors snap-start cursor-pointer">
-                              <div className="w-10 h-10 rounded-full bg-purple-50 text-purple-600 flex items-center justify-center mb-2"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg></div>
-                              <span className="text-sm font-bold text-gray-800">Business</span>
-                              <span className="text-[10px] text-gray-400">Setup & License</span>
-                           </div>
-                        </>
-                    )}
+                        if (name.includes('visa')) {
+                            // Blue Card Icon
+                            colorClass = 'text-blue-600 bg-blue-50';
+                            icon = <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />;
+                        } else if (name.includes('tour') || name.includes('travel')) {
+                            // Triangle / Tree Icon (Green)
+                            icon = <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />;
+                        } else if (name.includes('car') || name.includes('lift') || name.includes('rent')) {
+                            // Triangle / Navigation Icon (Green)
+                            icon = <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />;
+                        } else if (name.includes('insurance')) {
+                            // Triangle Icon (Green)
+                            icon = <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />;
+                        } else if (name.includes('pack') || name.includes('mover')) {
+                            // Triangle Icon (Green)
+                            icon = <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />;
+                        } else {
+                            // Default Triangle Icon (Green)
+                            icon = <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />;
+                        }
+
+                        return (
+                            <div key={s.id} onClick={() => openRequestForm(s.name)} className="bg-white p-8 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center text-center hover:bg-gray-50 cursor-pointer transition-all hover:shadow-md h-full justify-center">
+                               <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-4 ${colorClass}`}>
+                                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                       {icon}
+                                   </svg>
+                               </div>
+                               <span className="text-base font-bold text-gray-900 mb-2">{s.name}</span>
+                               <span className="text-xs text-gray-500 leading-relaxed line-clamp-3">{s.description}</span>
+                            </div>
+                        );
+                    })}
                  </div>
               </div>
 
               {/* Recent Activity */}
-              <div>
-                 <div className="flex justify-between items-center mb-3">
-                    <h3 className="text-lg font-bold text-gray-900">Recent Activity</h3>
-                    <button onClick={() => user ? setCurrentPage('dashboard') : setCurrentPage('auth')} className="text-sm text-dubai-gold font-bold hover:underline">View All</button>
-                 </div>
-                 {user && requests.length > 0 ? (
-                    <div onClick={() => setCurrentPage('dashboard')} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex justify-between items-center cursor-pointer hover:bg-gray-50 transition-colors">
-                       <div>
-                          <p className="font-bold text-gray-900">{requests[0].title}</p>
-                          <p className="text-sm text-gray-500">{requests[0].quotes.length} Quotes • <span className="uppercase text-xs font-bold bg-gray-100 px-2 py-0.5 rounded">{requests[0].status}</span></p>
-                       </div>
-                       <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
-                    </div>
-                 ) : (
-                    <div className="text-center py-8 bg-white rounded-xl border border-gray-100 border-dashed text-gray-400">
-                       <p className="text-sm">{user ? 'No active requests.' : 'Sign in to see your activity.'}</p>
-                    </div>
-                 )}
-              </div>
+              {user && requests.length > 0 && (
+                <div className="py-4 border-t border-gray-200 mt-8">
+                   <div className="flex justify-between items-center mb-4">
+                      <h3 className="text-xl font-bold text-gray-900">Recent Activity</h3>
+                      <button onClick={() => setCurrentPage('dashboard')} className="text-sm text-dubai-gold font-bold hover:underline">View All</button>
+                   </div>
+                   <div className="space-y-3">
+                        {requests.slice(0, 3).map(req => (
+                            <div key={req.id} onClick={() => setCurrentPage('dashboard')} className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 flex justify-between items-center cursor-pointer hover:bg-gray-50 transition-colors">
+                                <div>
+                                    <div className="flex items-center gap-2 mb-1">
+                                        <span className="text-xs font-bold bg-gray-100 text-gray-600 px-2 py-0.5 rounded uppercase">{req.category}</span>
+                                        <span className="text-xs text-gray-400">{new Date(req.createdAt).toLocaleDateString()}</span>
+                                    </div>
+                                    <p className="font-bold text-gray-900">{req.title}</p>
+                                    <p className="text-sm text-gray-500 mt-1">{req.quotes.length} Quotes Received</p>
+                                </div>
+                                <div className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${
+                                    req.status === 'open' ? 'bg-blue-50 text-blue-700' : 
+                                    req.status === 'quoted' ? 'bg-yellow-50 text-yellow-700' : 
+                                    'bg-green-50 text-green-700'
+                                }`}>
+                                    {req.status}
+                                </div>
+                            </div>
+                        ))}
+                   </div>
+                </div>
+              )}
            </div>
         </div>
        )}

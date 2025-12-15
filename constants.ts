@@ -3,6 +3,16 @@ import { Coordinates } from "./types";
 
 export const API_DELAY = 1000;
 
+// Updated to match the design screenshot provided by the user
+export const DEFAULT_SERVICE_TYPES = [
+  { name: 'Visa Services', description: 'Assistance with tourist, family, employment, and visa renewal processes.', isActive: true },
+  { name: 'Tours & Travels', description: 'Travel planning, tour packages, bookings, and local experiences.', isActive: true },
+  { name: 'Car Lift', description: 'Daily or monthly car lift services for office and personal commuting.', isActive: true },
+  { name: 'Rent a Car', description: 'Short-term and long-term car rental options for personal and business use.', isActive: true },
+  { name: 'Insurance Services', description: 'Health, vehicle, travel, and life insurance solutions tailored to your needs.', isActive: true },
+  { name: 'Packers & Movers', description: 'Safe and reliable packing, moving, and relocation services within and outside the city.', isActive: true },
+];
+
 // Staged Real Google Maps Data for Instant Performance
 export const REAL_DUBAI_LOCATIONS = [
   { name: "Downtown Dubai", lat: 25.1972, lng: 55.2744 },
