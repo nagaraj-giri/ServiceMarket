@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import Layout from './components/Layout';
 import AuthPage from './components/AuthPage';
@@ -16,7 +17,7 @@ import MessagesPage from './components/MessagesPage';
 import DirectMessageModal from './components/DirectMessageModal';
 import ProviderProfileView from './components/ProviderProfile';
 
-import { User, UserRole, ServiceRequest, ProviderProfile, Notification, Quote, ServiceType, ServiceCategory, Conversation, AdminSection } from './types';
+import { User, UserRole, ServiceRequest, ProviderProfile, Notification, Quote, ServiceType, ServiceCategory, Conversation, AdminSection, SiteSettings } from './types';
 import { api } from './services/api';
 
 const App: React.FC = () => {
@@ -35,10 +36,21 @@ const App: React.FC = () => {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [serviceTypes, setServiceTypes] = useState<ServiceType[]>([]);
+  const [siteSettings, setSiteSettings] = useState<SiteSettings>({
+    siteName: 'DubaiLink',
+    contactEmail: '',
+    maintenanceMode: false,
+    allowNewRegistrations: true,
+    heroTitle: 'Golden Visa AE',
+    heroSubtitle: 'Secure your 10-year residency today with expert guidance.',
+    heroButtonText: 'Post Request'
+  });
 
   // UI State (Modals, Drawers)
   const [showRequestForm, setShowRequestForm] = useState(false);
   const [activeCategory, setActiveCategory] = useState<string | undefined>(undefined);
+  // Store pending request data for guests
+  const [pendingRequestData, setPendingRequestData] = useState<Omit<ServiceRequest, 'id' | 'quotes' | 'status' | 'createdAt'> | null>(null);
   
   const [showQuoteModal, setShowQuoteModal] = useState(false);
   const [activeRequestForQuote, setActiveRequestForQuote] = useState<string | null>(null);
@@ -62,6 +74,9 @@ const App: React.FC = () => {
       try {
         const types = await api.getServiceTypes();
         setServiceTypes(types);
+
+        const settings = await api.getSettings();
+        setSiteSettings(settings);
 
         const currentUser = await api.getCurrentUser();
         setUser(currentUser);
@@ -123,16 +138,15 @@ const App: React.FC = () => {
   };
 
   const openRequestForm = (category?: string) => {
-     if (!user) {
-        setCurrentPage('auth');
-        return; 
-     }
      setActiveCategory(category);
      setShowRequestForm(true);
   };
 
   const refreshData = async () => {
     if (user) await loadUserData(user);
+    // Also refresh settings in case admin updated them
+    const settings = await api.getSettings();
+    setSiteSettings(settings);
   };
 
   const handleLoginSuccess = async () => {
@@ -142,7 +156,19 @@ const App: React.FC = () => {
         setUser(u);
         if (u) {
             await loadUserData(u);
-            setCurrentPage('dashboard');
+            
+            // Check for pending request submission from guest flow
+            if (pendingRequestData) {
+                await api.createRequest({ ...pendingRequestData, userId: u.id });
+                setPendingRequestData(null); // Clear pending
+                showToastMessage('Request submitted successfully!', 'success');
+                // Force a data refresh to show the new request immediately
+                const updatedReqs = await api.getRequests(u);
+                setRequests(updatedReqs);
+                setCurrentPage('dashboard');
+            } else {
+                setCurrentPage('dashboard');
+            }
         } else {
             // Fallback if getCurrentUser fails but login succeeded (rare)
             setCurrentPage('home');
@@ -208,7 +234,7 @@ const App: React.FC = () => {
          }
       }}
       onToggleAi={() => setShowAi(true)}
-      siteSettings={{ siteName: 'DubaiLink', contactEmail: '', maintenanceMode: false, allowNewRegistrations: true }}
+      siteSettings={siteSettings}
       adminSection={adminSection}
       setAdminSection={setAdminSection}
     >
@@ -218,17 +244,25 @@ const App: React.FC = () => {
            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
               
               {/* Hero Banner */}
-              <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-dubai-dark to-gray-800 text-white shadow-lg p-6 sm:p-10">
-                 <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full -mr-20 -mt-20 blur-3xl"></div>
+              <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-dubai-dark to-gray-800 text-white shadow-lg p-6 sm:p-10 min-h-[280px] flex items-center">
+                 {siteSettings.heroImage && (
+                    <>
+                        <div className="absolute inset-0 bg-black/40 z-0"></div>
+                        <img src={siteSettings.heroImage} alt="Hero" className="absolute inset-0 w-full h-full object-cover -z-10" />
+                    </>
+                 )}
+                 {!siteSettings.heroImage && (
+                    <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full -mr-20 -mt-20 blur-3xl"></div>
+                 )}
                  <div className="relative z-10 max-w-lg">
                     <span className="text-[10px] font-bold bg-dubai-gold/20 text-dubai-gold px-2 py-0.5 rounded uppercase tracking-wide">Trending</span>
-                    <h2 className="text-2xl sm:text-4xl font-bold mt-2 mb-2">Golden Visa AE</h2>
-                    <p className="text-gray-300 text-sm sm:text-base mb-6">Secure your 10-year residency today with expert guidance.</p>
+                    <h2 className="text-2xl sm:text-4xl font-bold mt-2 mb-2">{siteSettings.heroTitle || "Golden Visa AE"}</h2>
+                    <p className="text-gray-300 text-sm sm:text-base mb-6">{siteSettings.heroSubtitle || "Secure your 10-year residency today with expert guidance."}</p>
                     <button 
                        onClick={() => openRequestForm(ServiceCategory.VISA)}
                        className="bg-dubai-gold text-white text-sm font-bold px-6 py-3 rounded-xl hover:bg-yellow-600 transition-colors shadow-lg"
                     >
-                       Post Request
+                       {siteSettings.heroButtonText || "Post Request"}
                     </button>
                  </div>
               </div>
@@ -428,12 +462,19 @@ const App: React.FC = () => {
        {showRequestForm && (
          <RequestForm 
            initialCategory={activeCategory}
+           serviceTypes={serviceTypes}
            onSubmit={async (data) => {
              if(user) {
                  await api.createRequest({ ...data, userId: user.id });
                  setShowRequestForm(false);
                  showToastMessage('Request posted successfully!', 'success');
                  refreshData();
+             } else {
+                 // Guest Flow: Save data pending login
+                 setPendingRequestData(data);
+                 setShowRequestForm(false);
+                 setCurrentPage('auth');
+                 showToastMessage('Please sign in to submit your request.', 'info');
              }
            }}
            onCancel={() => setShowRequestForm(false)}

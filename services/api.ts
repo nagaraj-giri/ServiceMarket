@@ -33,7 +33,7 @@ import {
   User as FirebaseUser
 } from "firebase/auth";
 
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import { 
   User, 
   UserRole, 
@@ -425,10 +425,58 @@ export const api = {
   // --- STORAGE ---
 
   uploadFile: async (file: File): Promise<string> => {
-    const storageRef = ref(storage, `uploads/${Date.now()}_${file.name}`);
-    await uploadBytes(storageRef, file);
-    const downloadURL = await getDownloadURL(storageRef);
-    return downloadURL;
+    if (!auth.currentUser) {
+        throw new Error("You must be logged in to upload files.");
+    }
+
+    // Completely sanitize filename
+    const extension = file.name.split('.').pop()?.toLowerCase() || 'bin';
+    const randomId = Math.random().toString(36).substring(2, 12);
+    const safeFileName = `${Date.now()}_${randomId}.${extension}`;
+    
+    console.log(`Starting upload: ${safeFileName} by user: ${auth.currentUser.uid}`); 
+
+    // Force a token refresh to ensure we have valid auth credentials for Storage
+    try {
+        await auth.currentUser.getIdToken(true);
+    } catch(e) {
+        console.warn("Failed to refresh token before upload", e);
+    }
+
+    const storageRef = ref(storage, `uploads/${safeFileName}`);
+    
+    // Explicitly set content type to help with access control and browser handling
+    const metadata = {
+        contentType: file.type || 'application/octet-stream',
+    };
+    
+    // Use uploadBytesResumable for better reliability on flaky connections (like mobile)
+    // and potentially better error handling from SDK
+    return new Promise((resolve, reject) => {
+        const uploadTask = uploadBytesResumable(storageRef, file, metadata);
+
+        uploadTask.on('state_changed',
+          (snapshot) => {
+            // Observe state change events such as progress, pause, and resume
+            const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+            console.log('Upload is ' + progress + '% done');
+          }, 
+          (error) => {
+            // Handle unsuccessful uploads
+            console.error("Upload failed in task:", error);
+            reject(error);
+          }, 
+          async () => {
+            // Handle successful uploads on complete
+            try {
+                const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+                resolve(downloadURL);
+            } catch(e) {
+                reject(e);
+            }
+          }
+        );
+    });
   },
 
   // --- REQUESTS & LEADS ---

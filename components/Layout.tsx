@@ -129,6 +129,19 @@ const Layout: React.FC<LayoutProps> = ({ children, user, currentPage, setCurrent
 
         {/* Right: Actions (Notification & Profile) */}
         <div className="flex items-center gap-4">
+           {/* Post Request Icon (Visible to guests and non-providers) */}
+           {onPostRequest && (!user || user.role === UserRole.USER) && (
+             <button 
+               onClick={onPostRequest}
+               className="p-2 text-gray-400 hover:text-dubai-gold hover:bg-gray-100 rounded-full transition-colors"
+               title="Post New Request"
+             >
+               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+               </svg>
+             </button>
+           )}
+
            {user ? (
              <>
                {/* Notifications */}
@@ -231,7 +244,7 @@ const Layout: React.FC<LayoutProps> = ({ children, user, currentPage, setCurrent
                  Sign In
                </button>
                <button 
-                 onClick={onLoginClick}
+                 onClick={onPostRequest || onLoginClick}
                  className="bg-dubai-dark text-white px-5 py-2 rounded-lg text-sm font-bold hover:bg-black transition-colors shadow-sm"
                >
                  Get Started
@@ -468,8 +481,15 @@ const Layout: React.FC<LayoutProps> = ({ children, user, currentPage, setCurrent
         <div className="relative h-full flex items-center justify-center">
              <button
                 onClick={() => {
-                    if (onPostRequest && user?.role !== UserRole.PROVIDER) onPostRequest();
-                    else if (!user) onLoginClick();
+                    if (onPostRequest) {
+                        if (user && user.role === UserRole.PROVIDER) {
+                            // Do nothing or show message for provider
+                        } else {
+                            onPostRequest();
+                        }
+                    } else if (!user) {
+                        onLoginClick();
+                    }
                 }}
                 className="absolute -top-6 left-1/2 transform -translate-x-1/2 w-14 h-14 bg-dubai-gold text-white rounded-full shadow-lg border-4 border-gray-50 flex items-center justify-center transition-transform active:scale-95"
              >

@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo } from 'react';
 import { 
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend, 
@@ -115,10 +114,9 @@ const AdminAnalytics: React.FC<AdminAnalyticsProps> = ({ requests, providers, us
         }
         return acc;
     }, {} as Record<string, number>);
-    const returningUsers = Object.values(userRequestCounts).filter(c => c > 1).length;
-    const retentionRate = totalUsers > 0 ? Math.round((returningUsers / totalUsers) * 100) : 0;
+    const returningUsers = Object.values(userRequestCounts).filter((c: number) => c > 1).length;
 
-    return { totalUsers, newUsersToday, activeCount, retentionRate };
+    return { totalUsers, newUsersToday, activeCount, retentionRate: totalUsers > 0 ? Math.round((returningUsers / totalUsers) * 100) : 0 };
   }, [analyticsUsers, requests, providers]);
 
   // 3. User Segmentation - Using filtered analyticsUsers (Admins will be 0)

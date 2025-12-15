@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { ServiceRequest, Coordinates, ServiceType } from '../types';
+import { ServiceRequest, Coordinates, ServiceType, ServiceCategory } from '../types';
 import { REAL_DUBAI_LOCATIONS } from '../constants';
 import { getPlaceSuggestions, PlaceSuggestion } from '../services/geminiService';
 import { api } from '../services/api';
@@ -9,9 +9,10 @@ interface RequestFormProps {
   onSubmit: (request: Omit<ServiceRequest, 'id' | 'quotes' | 'status' | 'createdAt'>) => void;
   onCancel: () => void;
   initialCategory?: string;
+  serviceTypes?: ServiceType[];
 }
 
-const RequestForm: React.FC<RequestFormProps> = ({ onSubmit, onCancel, initialCategory }) => {
+const RequestForm: React.FC<RequestFormProps> = ({ onSubmit, onCancel, initialCategory, serviceTypes = [] }) => {
   // Form State
   const [category, setCategory] = useState(initialCategory || '');
   const [title, setTitle] = useState('');
@@ -21,7 +22,7 @@ const RequestForm: React.FC<RequestFormProps> = ({ onSubmit, onCancel, initialCa
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Service Category Dropdown State
-  const [availableServiceTypes, setAvailableServiceTypes] = useState<ServiceType[]>([]);
+  const [availableServiceTypes, setAvailableServiceTypes] = useState<ServiceType[]>(serviceTypes);
   const [showCategorySuggestions, setShowCategorySuggestions] = useState(false);
   const categoryWrapperRef = useRef<HTMLDivElement>(null);
 
@@ -31,18 +32,38 @@ const RequestForm: React.FC<RequestFormProps> = ({ onSubmit, onCancel, initialCa
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
-  // Load Service Types on Mount
+  // Load Service Types on Mount if not provided prop
   useEffect(() => {
+    if (serviceTypes.length > 0) {
+      setAvailableServiceTypes(serviceTypes);
+      return;
+    }
+
     const fetchServiceTypes = async () => {
       try {
         const types = await api.getServiceTypes();
-        setAvailableServiceTypes(types.filter(t => t.isActive));
+        if (types && types.length > 0) {
+            setAvailableServiceTypes(types.filter(t => t.isActive));
+        } else {
+            // Fallback defaults if no dynamic types exist
+            setAvailableServiceTypes([
+                { id: 'def_visa', name: ServiceCategory.VISA, description: 'Assistance with tourist, family, employment, and visa renewal processes.', isActive: true },
+                { id: 'def_biz', name: ServiceCategory.BUSINESS, description: 'Complete support for Mainland, Freezone, and Offshore company formation.', isActive: true },
+                { id: 'def_travel', name: ServiceCategory.TRAVEL, description: 'Custom holiday packages, flight bookings, and luxury concierge services.', isActive: true }
+            ]);
+        }
       } catch (error) {
         console.error("Failed to load service types", error);
+        // Fallback on error
+        setAvailableServiceTypes([
+            { id: 'def_visa', name: ServiceCategory.VISA, description: 'Assistance with tourist, family, employment, and visa renewal processes.', isActive: true },
+            { id: 'def_biz', name: ServiceCategory.BUSINESS, description: 'Complete support for Mainland, Freezone, and Offshore company formation.', isActive: true },
+            { id: 'def_travel', name: ServiceCategory.TRAVEL, description: 'Custom holiday packages, flight bookings, and luxury concierge services.', isActive: true }
+        ]);
       }
     };
     fetchServiceTypes();
-  }, []);
+  }, [serviceTypes]);
 
   // Handle clicking outside to close suggestions
   useEffect(() => {
@@ -132,9 +153,20 @@ const RequestForm: React.FC<RequestFormProps> = ({ onSubmit, onCancel, initialCa
     }, 1000);
   };
 
-  const filteredServices = availableServiceTypes.filter(s => 
-    s.name.toLowerCase().includes(category.toLowerCase())
-  );
+  // Improved filtering logic for Category Dropdown
+  const filteredServices = availableServiceTypes.filter(s => {
+    const inputLower = category.toLowerCase();
+    // If the input matches a service name exactly, show ALL options to allow switching
+    // This solves the issue where selecting "Visa Services" would filter out other options
+    const isExactMatch = availableServiceTypes.some(t => t.name.toLowerCase() === inputLower);
+    
+    if (isExactMatch) return true;
+    
+    return s.name.toLowerCase().includes(inputLower);
+  });
+
+  // Find the full service object if the current input matches a name exactly
+  const selectedServiceType = availableServiceTypes.find(s => s.name === category);
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-[80] backdrop-blur-sm animate-in fade-in duration-200">
@@ -170,18 +202,30 @@ const RequestForm: React.FC<RequestFormProps> = ({ onSubmit, onCancel, initialCa
                     setCategory(e.target.value);
                     setShowCategorySuggestions(true);
                   }}
-                  onFocus={() => setShowCategorySuggestions(true)}
+                  onFocus={(e) => {
+                    setShowCategorySuggestions(true);
+                  }}
                   placeholder="Select or search category..."
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-dubai-gold focus:border-transparent outline-none bg-white pr-10 cursor-pointer"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-dubai-gold focus:border-transparent outline-none bg-white pr-10 cursor-pointer text-gray-900"
                   autoComplete="off"
                 />
-                <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none text-gray-400">
-                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                <div 
+                  className="absolute inset-y-0 right-0 pr-3 flex items-center cursor-pointer text-gray-400 hover:text-gray-600"
+                  onClick={() => {
+                    // Toggle list logic
+                    if (showCategorySuggestions) {
+                      setShowCategorySuggestions(false);
+                    } else {
+                      setShowCategorySuggestions(true);
+                    }
+                  }}
+                >
+                   <svg className={`w-4 h-4 transition-transform duration-200 ${showCategorySuggestions ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
                 </div>
             </div>
             
             {showCategorySuggestions && (
-                <ul className="absolute z-10 w-full bg-white shadow-xl max-h-60 rounded-lg py-1 text-base ring-1 ring-black ring-opacity-5 overflow-auto focus:outline-none sm:text-sm mt-1 border border-gray-100 animate-in fade-in slide-in-from-top-1">
+                <ul className="absolute z-20 w-full bg-white shadow-xl max-h-60 rounded-lg py-1 text-base ring-1 ring-black ring-opacity-5 overflow-auto focus:outline-none sm:text-sm mt-1 border border-gray-100 animate-in fade-in slide-in-from-top-1">
                   {filteredServices.length > 0 ? filteredServices.map((type) => (
                     <li
                       key={type.id}
@@ -189,7 +233,7 @@ const RequestForm: React.FC<RequestFormProps> = ({ onSubmit, onCancel, initialCa
                         setCategory(type.name);
                         setShowCategorySuggestions(false);
                       }}
-                      className="cursor-pointer select-none relative py-2.5 pl-4 pr-4 hover:bg-gray-50 text-gray-900 border-b border-gray-50 last:border-0"
+                      className={`cursor-pointer select-none relative py-2.5 pl-4 pr-4 hover:bg-gray-50 text-gray-900 border-b border-gray-50 last:border-0 ${type.name === category ? 'bg-blue-50 text-blue-700 font-medium' : ''}`}
                     >
                       <span className="block truncate font-medium">{type.name}</span>
                       {type.description && <span className="block text-xs text-gray-500 truncate mt-0.5">{type.description}</span>}
@@ -198,6 +242,16 @@ const RequestForm: React.FC<RequestFormProps> = ({ onSubmit, onCancel, initialCa
                     <li className="px-4 py-3 text-gray-500 italic text-sm text-center">No matching categories found.</li>
                   )}
                 </ul>
+            )}
+
+            {/* Selected Category Description Card (Matches Screenshot) */}
+            {selectedServiceType && (
+              <div className="mt-3 p-4 border border-gray-200 rounded-xl bg-white shadow-sm animate-in fade-in slide-in-from-top-1">
+                <h4 className="font-bold text-gray-900 text-sm mb-1">{selectedServiceType.name}</h4>
+                <p className="text-xs text-gray-500 leading-relaxed">
+                  {selectedServiceType.description}
+                </p>
+              </div>
             )}
           </div>
 
@@ -245,7 +299,7 @@ const RequestForm: React.FC<RequestFormProps> = ({ onSubmit, onCancel, initialCa
               </div>
               
               {showSuggestions && filteredLocalities.length > 0 && (
-                <ul className="absolute z-10 w-full bg-white shadow-xl max-h-60 rounded-md py-1 text-base ring-1 ring-black ring-opacity-5 overflow-auto focus:outline-none sm:text-sm mt-1 border border-gray-100 animate-in fade-in slide-in-from-top-1">
+                <ul className="absolute z-20 w-full bg-white shadow-xl max-h-60 rounded-md py-1 text-base ring-1 ring-black ring-opacity-5 overflow-auto focus:outline-none sm:text-sm mt-1 border border-gray-100 animate-in fade-in slide-in-from-top-1">
                   {filteredLocalities.map((loc, idx) => (
                     <li
                       key={`${loc.name}-${idx}`}

@@ -1,9 +1,11 @@
+
 import React, { useState, useEffect } from 'react';
 import { ServiceRequest, ProviderProfile, User, SiteSettings, ServiceType, UserRole, AuditLog, AdminSection, AiInteraction } from '../types';
 import { api } from '../services/api';
 import AdminAnalytics from './AdminAnalytics';
 import { ToastType } from './Toast';
 import { TableSkeleton } from './Skeleton';
+import FileUploader from './FileUploader';
 
 interface AdminDashboardProps {
   requests: ServiceRequest[];
@@ -840,6 +842,51 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ requests, providers, us
               <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-dubai-gold rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
             </label>
           </div>
+
+          <div className="pt-6 border-t border-gray-100">
+            <h3 className="font-bold text-gray-800 mb-4">Hero Banner Configuration</h3>
+            <div className="space-y-4">
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Banner Image</label>
+                    <FileUploader 
+                        label="Hero Background" 
+                        currentImageUrl={settingsForm.heroImage} 
+                        onUploadComplete={(url) => setSettingsForm({...settingsForm, heroImage: url})} 
+                    />
+                </div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Hero Title</label>
+                    <input 
+                        type="text" 
+                        value={settingsForm.heroTitle || ''} 
+                        onChange={(e) => setSettingsForm({...settingsForm, heroTitle: e.target.value})}
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-dubai-gold outline-none"
+                        placeholder="e.g. Golden Visa AE"
+                    />
+                </div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Subtitle</label>
+                    <input 
+                        type="text" 
+                        value={settingsForm.heroSubtitle || ''} 
+                        onChange={(e) => setSettingsForm({...settingsForm, heroSubtitle: e.target.value})}
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-dubai-gold outline-none"
+                        placeholder="e.g. Secure your residency..."
+                    />
+                </div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Button Text</label>
+                    <input 
+                        type="text" 
+                        value={settingsForm.heroButtonText || ''} 
+                        onChange={(e) => setSettingsForm({...settingsForm, heroButtonText: e.target.value})}
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-dubai-gold outline-none"
+                        placeholder="e.g. Post Request"
+                    />
+                </div>
+            </div>
+          </div>
+
           <div className="pt-4">
             <button type="submit" className="px-6 py-2 bg-dubai-dark text-white font-bold rounded-lg hover:bg-black transition-colors">
               Save Changes
@@ -944,7 +991,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ requests, providers, us
                                 <td className="px-6 py-4">
                                     <div className="flex text-yellow-400">
                                         {[...Array(5)].map((_, i) => (
-                                            <svg key={i} className={`w-3 h-3 ${i < r.rating ? 'fill-current' : 'text-gray-200'}`} viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" /></svg>
+                                            <svg key={i} className={`w-3 h-3 ${i < r.rating ? 'fill-current' : 'text-gray-200'}`} viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" /></svg>
                                         ))}
                                     </div>
                                 </td>

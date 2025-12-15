@@ -16,6 +16,11 @@ export interface SiteSettings {
   contactEmail: string;
   maintenanceMode: boolean;
   allowNewRegistrations: boolean;
+  // Hero Banner Config
+  heroTitle?: string;
+  heroSubtitle?: string;
+  heroButtonText?: string;
+  heroImage?: string;
 }
 
 export interface ServiceType {
