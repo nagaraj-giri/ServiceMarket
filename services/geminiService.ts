@@ -1,7 +1,9 @@
 import { GoogleGenAI } from "@google/genai";
 
 // Initialize Gemini AI strictly using the environment variable as per guidelines
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Add safe access check for browser environments where process might not be defined
+const apiKey = (typeof process !== 'undefined' && process.env && process.env.API_KEY) ? process.env.API_KEY : '';
+const ai = new GoogleGenAI({ apiKey });
 
 export interface PlaceSuggestion {
   name: string;
@@ -9,8 +11,9 @@ export interface PlaceSuggestion {
 }
 
 export const getDubaiInsights = async (query: string): Promise<{ text: string; groundingChunks?: any[] }> => {
-  if (!process.env.API_KEY) {
-    return { text: "API Key is missing. Please check your environment configuration." };
+  if (!apiKey) {
+    console.error("API Key is missing in environment variables.");
+    return { text: "I'm unable to connect to my knowledge base at the moment. Please check the system configuration." };
   }
 
   try {
@@ -37,7 +40,7 @@ export const getDubaiInsights = async (query: string): Promise<{ text: string; g
 };
 
 export const getPlaceSuggestions = async (query: string): Promise<PlaceSuggestion[]> => {
-  if (!process.env.API_KEY) return [];
+  if (!apiKey) return [];
   if (!query || query.length < 3) return [];
 
   try {
@@ -53,8 +56,14 @@ export const getPlaceSuggestions = async (query: string): Promise<PlaceSuggestio
     let text = response.text;
     if (!text) return [];
     
-    // Clean potential markdown code blocks provided by the model
-    text = text.replace(/```json/g, '').replace(/```/g, '').trim();
+    // Improved JSON extraction: find the JSON array even if there is surrounding text
+    const jsonMatch = text.match(/\[[\s\S]*\]/);
+    if (jsonMatch) {
+        text = jsonMatch[0];
+    } else {
+        // Fallback: simple markdown cleanup
+        text = text.replace(/```json/gi, '').replace(/```/g, '').trim();
+    }
     
     try {
       const parsed = JSON.parse(text);
