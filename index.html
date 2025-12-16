@@ -4,53 +4,105 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>DubaiLink - Premium Service Marketplace</title>
+
+    <!-- Tailwind CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Fonts -->
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- Tailwind config -->
     <script>
       tailwind.config = {
         theme: {
           extend: {
             fontFamily: {
-              sans: ['Inter', 'sans-serif'],
+              sans: ["Inter", "sans-serif"],
             },
             colors: {
               dubai: {
-                gold: '#C5A059',
-                sand: '#F2F0E9',
-                dark: '#1A1A1A',
-                blue: '#003E7E'
-              }
-            }
-          }
-        }
-      }
+                gold: "#C5A059",
+                sand: "#F2F0E9",
+                dark: "#1A1A1A",
+                blue: "#003E7E",
+              },
+            },
+          },
+        },
+      };
     </script>
+
     <style>
-      body { font-family: 'Inter', sans-serif; background-color: #F8FAFC; }
-      .hide-scrollbar::-webkit-scrollbar { display: none; }
-      .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+      body {
+        font-family: "Inter", sans-serif;
+        background-color: #f8fafc;
+      }
+      .hide-scrollbar::-webkit-scrollbar {
+        display: none;
+      }
+      .hide-scrollbar {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+      }
     </style>
-  <script type="importmap">
+
+    <!-- Global Error Handler (Prevention) -->
+    <script>
+      window.addEventListener('error', function(event) {
+        // Ignore ResizeObserver errors which are benign
+        if (event.message === 'ResizeObserver loop limit exceeded') return;
+        
+        console.error('Boot Error:', event.error);
+        const root = document.getElementById('root');
+        
+        // Only show if the app hasn't mounted successfully
+        if (root && (!root.hasChildNodes() || root.innerHTML === '')) {
+           root.innerHTML = `
+             <div style="min-h-screen flex flex-col items-center justify-center bg-gray-50 p-6 text-center font-sans">
+               <div style="background: white; padding: 2rem; border-radius: 1rem; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1); border: 1px solid #fee2e2; max-width: 32rem; width: 100%;">
+                 <h2 style="color: #991b1b; font-size: 1.5rem; font-weight: 700; margin-bottom: 0.5rem;">Application Startup Error</h2>
+                 <p style="color: #4b5563; margin-bottom: 1.5rem;">A critical dependency conflict prevented the app from loading.</p>
+                 <div style="background: #fef2f2; padding: 1rem; border-radius: 0.5rem; overflow-x: auto; text-align: left; margin-bottom: 1.5rem; border: 1px solid #fecaca;">
+                   <code style="color: #b91c1c; font-size: 0.75rem; white-space: pre-wrap;">${event.message}</code>
+                 </div>
+                 <button onclick="window.location.reload()" style="background: #1f2937; color: white; padding: 0.75rem 1.5rem; border-radius: 0.5rem; border: none; cursor: pointer; font-weight: 600; transition: background 0.2s;">
+                   Reload Application
+                 </button>
+               </div>
+             </div>
+           `;
+        }
+      });
+    </script>
+
+    <!-- Importmap: Strict React 19.0.0 via ESM.SH -->
+    <script type="importmap">
 {
   "imports": {
-    "recharts": "https://aistudiocdn.com/recharts@^3.5.1",
-    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.30.0",
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
-    "react-dom": "https://aistudiocdn.com/react-dom@^19.2.0",
-    "react/jsx-runtime": "https://aistudiocdn.com/react@^19.2.0/jsx-runtime",
-    "react/": "https://aistudiocdn.com/react@^19.2.0/",
-    "react": "https://aistudiocdn.com/react@^19.2.0",
-    "firebase/app": "https://esm.sh/firebase@12.6.0/app",
-    "firebase/auth": "https://esm.sh/firebase@12.6.0/auth?deps=firebase@12.6.0",
-    "firebase/firestore": "https://esm.sh/firebase@12.6.0/firestore?deps=firebase@12.6.0",
-    "firebase/storage": "https://esm.sh/firebase@12.6.0/storage?deps=firebase@12.6.0",
+    "react": "https://esm.sh/react@19.0.0",
+    "react/jsx-runtime": "https://esm.sh/react@19.0.0/jsx-runtime",
+    "react-dom": "https://esm.sh/react-dom@19.0.0",
+    "react-dom/client": "https://esm.sh/react-dom@19.0.0/client",
+    "react-router-dom": "https://esm.sh/react-router-dom@6.22.3?external=react,react-dom",
+    "recharts": "https://esm.sh/recharts@2.12.7?external=react,react-dom",
+    "@google/genai": "https://esm.sh/@google/genai@0.1.1",
+    "firebase/app": "https://esm.sh/firebase@10.12.0/app",
+    "firebase/auth": "https://esm.sh/firebase@10.12.0/auth?deps=firebase@10.12.0",
+    "firebase/firestore": "https://esm.sh/firebase@10.12.0/firestore?deps=firebase@10.12.0",
+    "firebase/storage": "https://esm.sh/firebase@10.12.0/storage?deps=firebase@10.12.0",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "react/": "https://esm.sh/react@^19.2.3/",
     "firebase/": "https://esm.sh/firebase@^12.6.0/",
-    "vite": "https://esm.sh/vite@^7.2.7",
+    "vite": "https://esm.sh/vite@^7.3.0",
     "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2"
   }
 }
 </script>
-</head>
+  </head>
+
   <body>
     <div id="root"></div>
     <script type="module" src="/index.tsx"></script>

@@ -182,11 +182,23 @@ const ProviderProfileView: React.FC<ProviderProfileViewProps> = ({
                 <div className="bg-white p-6 md:p-8 rounded-xl shadow-sm border border-gray-100">
                    <h2 className="text-xl font-bold text-gray-900 mb-4">Services Offered</h2>
                    <div className="flex flex-wrap gap-2">
-                      {provider.services && provider.services.length > 0 ? provider.services.map((service, i) => (
-                         <span key={i} className="px-3 py-1 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium">
+                      {/* Admin Assigned Services (Gold Highlight) */}
+                      {provider.serviceTypes && provider.serviceTypes.map((service, i) => (
+                         <span key={`admin-${i}`} className="px-3 py-1 bg-yellow-100 text-yellow-800 border border-yellow-200 rounded-lg text-sm font-bold shadow-sm">
                             {service}
                          </span>
-                      )) : (
+                      ))}
+
+                      {/* Provider Tags (Gray) - Filter out duplicates if present in admin services */}
+                      {provider.services && provider.services
+                        .filter(s => !(provider.serviceTypes || []).includes(s))
+                        .map((service, i) => (
+                         <span key={`prov-${i}`} className="px-3 py-1 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium">
+                            {service}
+                         </span>
+                      ))}
+
+                      {(!provider.services?.length && !provider.serviceTypes?.length) && (
                          <span className="text-gray-400 italic">No specific services listed.</span>
                       )}
                    </div>

@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { UserRole, ServiceRequest, Quote, Conversation, ProviderProfile, ServiceType } from '../types';
 import { api } from '../services/api';
@@ -87,8 +86,6 @@ const Dashboard: React.FC<DashboardProps> = ({ role, requests, conversations = [
   useEffect(() => {
     const fetchServices = async () => {
       try {
-        // Simulate a slight delay for the weightless animation to be visible (UX preference)
-        // In a real app, this delay would just be the network time.
         const types = await api.getServiceTypes();
         setServiceTypes(types.filter(t => t.isActive));
       } catch (e) {

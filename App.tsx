@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Routes, Route, useNavigate, useLocation, Navigate, useParams } from 'react-router-dom';
 import { User, UserRole, ServiceRequest, ProviderProfile, Notification, Quote, SiteSettings, Conversation, AdminSection } from './types';
 import { api } from './services/api';
 import Layout from './components/Layout';
@@ -6,7 +7,7 @@ import Dashboard from './components/Dashboard';
 import AuthPage from './components/AuthPage';
 import RequestForm from './components/RequestForm';
 import VerifyEmailPage from './components/VerifyEmailPage';
-import ProviderProfileView from './components/ProviderProfile'; // Import correctly
+import ProviderProfileView from './components/ProviderProfile';
 import ProfileSettings from './components/ProfileSettings';
 import MessagesPage from './components/MessagesPage';
 import ProviderLeadsPage from './components/ProviderLeadsPage';
@@ -19,11 +20,17 @@ import QuoteAcceptanceModal from './components/QuoteAcceptanceModal';
 import QuoteDetailsModal from './components/QuoteDetailsModal';
 import TrashPage from './components/TrashPage';
 
+// Helper for Route Protection
+const RequireAuth = ({ user, children }: { user: User | null; children: React.ReactNode }) => {
+  if (!user) return <Navigate to="/login" replace />;
+  if (!user.emailVerified) return <Navigate to="/verify-email" replace />;
+  return <>{children}</>;
+};
+
 const App: React.FC = () => {
   // --- STATE ---
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [currentPage, setCurrentPage] = useState('home');
   const [adminSection, setAdminSection] = useState<AdminSection>('overview');
   
   // Data State
@@ -47,8 +54,10 @@ const App: React.FC = () => {
   const [quotingRequestId, setQuotingRequestId] = useState<string | null>(null);
   const [acceptingQuote, setAcceptingQuote] = useState<{quote: Quote, reqStatus: any} | null>(null);
   const [viewingQuote, setViewingQuote] = useState<Quote | null>(null);
-  const [viewingProviderId, setViewingProviderId] = useState<string | null>(null);
-  const [showTrash, setShowTrash] = useState(false);
+  const [viewingProviderId, setViewingProviderId] = useState<string | null>(null); // Kept for modal logic if needed, but switching to routes mostly
+  
+  const navigate = useNavigate();
+  const location = useLocation();
 
   // --- EFFECTS ---
 
@@ -59,16 +68,14 @@ const App: React.FC = () => {
       setUser(currentUser);
       setIsLoading(false);
       
-      // Default to home or dashboard if logged in
       if (currentUser) {
-        if (currentUser.role === UserRole.ADMIN) setCurrentPage('dashboard');
         refreshData();
       }
     };
     initAuth();
   }, []);
 
-  // Poll for updates (simplified for demo)
+  // Poll for updates
   useEffect(() => {
     if (!user) return;
     const interval = setInterval(() => {
@@ -102,7 +109,6 @@ const App: React.FC = () => {
         const allUsers = await api.getAllUsers();
         setUsers(allUsers);
       } else if (user.role === UserRole.PROVIDER) {
-         // Provider needs self profile
          const provs = await api.getProviders();
          setProviders(provs);
       }
@@ -120,14 +126,12 @@ const App: React.FC = () => {
   const handleLogin = async (loggedInUser: User) => {
     setUser(loggedInUser);
     
-    // Check for pending actions (e.g. user tried to post request before login)
     if (pendingAction === 'post_request') {
-      setCurrentPage('dashboard');
-      // Adding a small delay ensures state updates propagate correctly before opening the modal
+      navigate('/dashboard');
       setTimeout(() => setShowRequestForm(true), 100);
       setPendingAction(null);
     } else {
-      setCurrentPage('dashboard');
+      navigate('/dashboard');
     }
     
     refreshData();
@@ -136,7 +140,7 @@ const App: React.FC = () => {
   const handleLogout = async () => {
     await api.logout();
     setUser(null);
-    setCurrentPage('home');
+    navigate('/');
     setRequests([]);
     setNotifications([]);
     setPendingAction(null);
@@ -146,7 +150,7 @@ const App: React.FC = () => {
     if (!user) {
       setPendingAction('post_request');
       showToastMessage('Please sign in to post a request', 'info');
-      setCurrentPage('login');
+      navigate('/login');
     } else {
       setShowRequestForm(true);
     }
@@ -186,9 +190,7 @@ const App: React.FC = () => {
     try {
       await api.acceptQuote(requests.find(r => r.quotes.some(q => q.id === acceptingQuote.quote.id))?.id || '', acceptingQuote.quote.id);
       showToastMessage('Quote accepted!', 'success');
-      // Note: Payment/Completion flow would continue here, handled inside modal logic usually or triggers refresh
       refreshData();
-      // Don't close modal yet, wait for payment completion flow inside component
     } catch (e) {
       showToastMessage('Failed to accept quote.', 'error');
     }
@@ -198,7 +200,6 @@ const App: React.FC = () => {
     if (!acceptingQuote) return;
     const requestId = requests.find(r => r.quotes.some(q => q.id === acceptingQuote.quote.id))?.id;
     if (requestId) {
-        // Automatically close request if paid
         await api.completeOrder(requestId);
         showToastMessage('Order confirmed and request closed.', 'success');
         setAcceptingQuote(null);
@@ -222,86 +223,75 @@ const App: React.FC = () => {
      return <div className="min-h-screen flex items-center justify-center bg-gray-50 text-dubai-gold animate-pulse">Loading DubaiLink...</div>;
   }
 
-  // 1. Auth Page
-  if (currentPage === 'login' && !user) {
-    return (
-      <>
-        <AuthPage onSuccess={handleLogin} showToast={showToastMessage} />
-        <Toast 
-          message={toast.message} 
-          type={toast.type} 
-          isVisible={toast.isVisible} 
-          onClose={() => setToast({ ...toast, isVisible: false })} 
-        />
-      </>
-    );
-  }
-
-  // 2. Verify Email Page
-  if (user && !user.emailVerified) {
-    return (
-      <>
-        <VerifyEmailPage 
-          user={user} 
-          onLogout={handleLogout} 
-          onVerificationCheck={async () => {
-             const u = await api.refreshUserAuth();
-             if (u?.emailVerified) {
-                setUser(u);
-                showToastMessage('Email verified!', 'success');
-             } else {
-                showToastMessage('Email not verified yet.', 'error');
-             }
-          }} 
-        />
-        <Toast 
-          message={toast.message} 
-          type={toast.type} 
-          isVisible={toast.isVisible} 
-          onClose={() => setToast({ ...toast, isVisible: false })} 
-        />
-      </>
-    );
-  }
-
-  // 3. Main Layout
   return (
-    <Layout
-      user={user}
-      currentPage={currentPage}
-      setCurrentPage={setCurrentPage}
-      onLogout={handleLogout}
-      onLoginClick={() => setCurrentPage('login')}
-      onPostRequest={openRequestForm}
-      notifications={notifications}
-      onMarkRead={(id) => api.markNotificationAsRead(id).then(refreshData)}
-      onMarkAllRead={() => user && api.markAllNotificationsAsRead(user.id).then(refreshData)}
-      onToggleAi={() => setShowAiAssistant(!showAiAssistant)}
-      siteSettings={siteSettings}
-      adminSection={adminSection}
-      setAdminSection={setAdminSection}
-    >
-       {/* HOME / DASHBOARD */}
-       {(currentPage === 'home' || currentPage === 'dashboard') && (
-         <>
-           {user?.role === UserRole.ADMIN && currentPage === 'dashboard' ? (
-             <AdminDashboard 
-                requests={requests}
-                providers={providers}
-                users={users}
-                onDeleteRequest={handleDeleteRequest}
-                onToggleVerifyProvider={async (pid) => { await api.toggleProviderVerification(pid); refreshData(); }}
-                activeSection={adminSection}
-                showToast={showToastMessage}
-             />
-           ) : (
+    <>
+      <Routes>
+        <Route path="/login" element={
+          !user ? <AuthPage onSuccess={handleLogin} showToast={showToastMessage} /> : <Navigate to="/dashboard" replace />
+        } />
+        
+        <Route path="/verify-email" element={
+          user && !user.emailVerified ? (
+            <VerifyEmailPage 
+              user={user} 
+              onLogout={handleLogout} 
+              onVerificationCheck={async () => {
+                 const u = await api.refreshUserAuth();
+                 if (u?.emailVerified) {
+                    setUser(u);
+                    showToastMessage('Email verified!', 'success');
+                    navigate('/dashboard');
+                 } else {
+                    showToastMessage('Email not verified yet.', 'error');
+                 }
+              }} 
+            />
+          ) : <Navigate to="/dashboard" replace />
+        } />
+
+        <Route path="/" element={
+          <Layout
+            user={user}
+            onLogout={handleLogout}
+            onPostRequest={openRequestForm}
+            notifications={notifications}
+            onMarkRead={(id) => api.markNotificationAsRead(id).then(refreshData)}
+            onMarkAllRead={() => user && api.markAllNotificationsAsRead(user.id).then(refreshData)}
+            onToggleAi={() => setShowAiAssistant(!showAiAssistant)}
+            siteSettings={siteSettings}
+          >
              <Dashboard 
                 role={user?.role || UserRole.USER}
                 requests={requests}
                 conversations={conversations}
                 currentProvider={user?.role === UserRole.PROVIDER ? providers.find(p => p.id === user.id) : undefined}
                 currentProviderId={user?.id}
-                onViewProvider={(pid) => { setViewingProviderId(pid); setCurrentPage('provider-view'); }}
+                onViewProvider={(pid) => navigate(`/provider/${pid}`)}
+                onPostRequest={openRequestForm}
+                isHomeView={true}
+                // Pass minimal props for home view
+             />
+          </Layout>
+        } />
+
+        <Route path="/dashboard" element={
+          <Layout
+            user={user}
+            onLogout={handleLogout}
+            onPostRequest={openRequestForm}
+            notifications={notifications}
+            onMarkRead={(id) => api.markNotificationAsRead(id).then(refreshData)}
+            onMarkAllRead={() => user && api.markAllNotificationsAsRead(user.id).then(refreshData)}
+            onToggleAi={() => setShowAiAssistant(!showAiAssistant)}
+            siteSettings={siteSettings}
+          >
+             <Dashboard 
+                role={user?.role || UserRole.USER}
+                requests={requests}
+                conversations={conversations}
+                currentProvider={user?.role === UserRole.PROVIDER ? providers.find(p => p.id === user.id) : undefined}
+                currentProviderId={user?.id}
+                onViewProvider={(pid) => navigate(`/provider/${pid}`)}
                 onAcceptQuote={(rid, qid) => {
                    const req = requests.find(r => r.id === rid);
                    const quote = req?.quotes.find(q => q.id === qid);
@@ -309,92 +299,125 @@ const App: React.FC = () => {
                 }}
                 onChatWithProvider={(pid, name) => setActiveChatUser({ id: pid, name })}
                 onChatWithUser={(uid, name) => setActiveChatUser({ id: uid, name })}
-                onSubmitQuote={(rid) => setQuotingRequestId(rid)} // Only for providers in dashboard context if needed
-                onIgnoreRequest={(rid) => { /* Implement ignore logic if needed */ }}
+                onSubmitQuote={(rid) => setQuotingRequestId(rid)}
                 onViewQuote={(q) => setViewingQuote(q)}
                 onDeleteRequest={handleDeleteRequest}
                 onPostRequest={openRequestForm}
-                isHomeView={currentPage === 'home'}
              />
-           )}
-         </>
-       )}
+          </Layout>
+        } />
 
-       {/* PROVIDER LEADS PAGE */}
-       {currentPage === 'provider-leads' && user?.role === UserRole.PROVIDER && (
-          <ProviderLeadsPage 
-             requests={requests} // Note: api.getRequests returns relevant requests for user/provider
-             allRequests={requests} // For this simple implementation, it's the same list
-             currentProviderId={user.id}
-             currentProvider={providers.find(p => p.id === user.id)}
-             onSubmitQuote={(rid) => setQuotingRequestId(rid)}
-             onIgnoreRequest={(rid) => { /* ignore */ }}
-          />
-       )}
+        <Route path="/admin" element={
+          <RequireAuth user={user}>
+            <Layout
+              user={user}
+              onLogout={handleLogout}
+              notifications={notifications}
+              siteSettings={siteSettings}
+              adminSection={adminSection}
+              setAdminSection={setAdminSection}
+            >
+               {user?.role === UserRole.ADMIN ? (
+                 <AdminDashboard 
+                    requests={requests}
+                    providers={providers}
+                    users={users}
+                    onDeleteRequest={handleDeleteRequest}
+                    onToggleVerifyProvider={async (pid) => { await api.toggleProviderVerification(pid); refreshData(); }}
+                    activeSection={adminSection}
+                    showToast={showToastMessage}
+                 />
+               ) : <Navigate to="/dashboard" />}
+            </Layout>
+          </RequireAuth>
+        } />
 
-       {/* MESSAGES PAGE */}
-       {currentPage === 'messages' && user && (
-          <MessagesPage 
-            conversations={conversations}
-            onOpenChat={(uid, name) => setActiveChatUser({ id: uid, name })}
-          />
-       )}
+        <Route path="/provider-leads" element={
+          <RequireAuth user={user}>
+            <Layout user={user} onLogout={handleLogout} siteSettings={siteSettings}>
+               {user?.role === UserRole.PROVIDER ? (
+                  <ProviderLeadsPage 
+                     requests={requests}
+                     allRequests={requests}
+                     currentProviderId={user.id}
+                     currentProvider={providers.find(p => p.id === user.id)}
+                     onSubmitQuote={(rid) => setQuotingRequestId(rid)}
+                  />
+               ) : <Navigate to="/dashboard" />}
+            </Layout>
+          </RequireAuth>
+        } />
 
-       {/* PROVIDER PROFILE VIEW (Public) */}
-       {currentPage === 'provider-view' && viewingProviderId && (
-          <ProviderProfileView 
-             provider={providers.find(p => p.id === viewingProviderId) || {id: viewingProviderId, name: 'Provider', services: [], rating: 0, reviewCount: 0, badges: [], description: '', location: '', serviceTypes: [], isVerified: false, reviews: [], gallery: [], coverImage: '', profileImage: '', tagline: ''}}
-             currentUser={user}
-             onBack={() => setCurrentPage('dashboard')}
-             onSubmitReview={async (pid, rev) => { await api.addReview(pid, rev); showToastMessage('Review submitted', 'success'); refreshData(); }}
-             onRequestQuote={() => { 
-                if (!user) {
-                   setPendingAction('post_request');
-                   showToastMessage('Please sign in to request a quote', 'info');
-                   setCurrentPage('login');
-                } else {
-                   openRequestForm();
-                }
-             }}
-             showToast={showToastMessage}
-          />
-       )}
+        <Route path="/messages" element={
+          <RequireAuth user={user}>
+            <Layout user={user} onLogout={handleLogout} siteSettings={siteSettings}>
+               <MessagesPage 
+                 conversations={conversations}
+                 onOpenChat={(uid, name) => setActiveChatUser({ id: uid, name })}
+               />
+            </Layout>
+          </RequireAuth>
+        } />
 
-       {/* PROFILE SETTINGS */}
-       {currentPage === 'profile-settings' && user && (
-          <ProfileSettings 
-             role={user.role}
-             initialData={user.role === UserRole.PROVIDER ? { ...providers.find(p => p.id === user.id), email: user.email } : user}
-             onSave={async (data) => {
-                if (user.role === UserRole.PROVIDER) await api.updateProvider(user.id, data);
-                else await api.updateUser({ ...user, ...data });
-                showToastMessage('Profile updated successfully', 'success');
-                refreshData();
-                setCurrentPage('dashboard');
-             }}
-             onCancel={() => setCurrentPage('dashboard')}
-             onPreview={() => {
-                if (user.role === UserRole.PROVIDER) {
-                   setViewingProviderId(user.id);
-                   setCurrentPage('provider-view');
-                }
-             }}
-          />
-       )}
+        <Route path="/profile-settings" element={
+          <RequireAuth user={user}>
+            <Layout user={user} onLogout={handleLogout} siteSettings={siteSettings}>
+               <ProfileSettings 
+                  role={user!.role}
+                  initialData={user!.role === UserRole.PROVIDER ? { ...providers.find(p => p.id === user!.id), email: user!.email } : user}
+                  onSave={async (data) => {
+                     if (user!.role === UserRole.PROVIDER) await api.updateProvider(user!.id, data);
+                     else await api.updateUser({ ...user!, ...data });
+                     showToastMessage('Profile updated successfully', 'success');
+                     refreshData();
+                     navigate('/dashboard');
+                  }}
+                  onCancel={() => navigate('/dashboard')}
+                  onPreview={() => {
+                     if (user!.role === UserRole.PROVIDER) navigate(`/provider/${user!.id}`);
+                  }}
+               />
+            </Layout>
+          </RequireAuth>
+        } />
 
-       {/* TRASH PAGE */}
-       {currentPage === 'trash' && (
-          <TrashPage 
-             deletedRequests={[]} // Implement soft delete filter here if using soft delete
-             onRestore={() => {}} 
-             onPermanentDelete={() => {}} 
-             onBack={() => setCurrentPage('dashboard')} 
-          />
-       )}
+        <Route path="/provider/:providerId" element={
+           <Layout
+             user={user}
+             onLogout={handleLogout}
+             onPostRequest={openRequestForm}
+             siteSettings={siteSettings}
+           >
+              {/* Note: In a real app we'd fetch specific provider by ID from params. 
+                  Here we use the pre-fetched providers list for simplicity. */}
+              <ProviderRouteWrapper 
+                 providers={providers}
+                 user={user}
+                 onBack={() => navigate('/dashboard')}
+                 onSubmitReview={async (pid, rev) => { await api.addReview(pid, rev); showToastMessage('Review submitted', 'success'); refreshData(); }}
+                 onRequestQuote={openRequestForm}
+                 showToast={showToastMessage}
+              />
+           </Layout>
+        } />
 
-       {/* --- MODALS & OVERLAYS --- */}
+        <Route path="/trash" element={
+           <RequireAuth user={user}>
+             <Layout user={user} onLogout={handleLogout} siteSettings={siteSettings}>
+                <TrashPage 
+                   deletedRequests={[]} 
+                   onRestore={() => {}} 
+                   onPermanentDelete={() => {}} 
+                   onBack={() => navigate('/dashboard')} 
+                />
+             </Layout>
+           </RequireAuth>
+        } />
 
-       {showRequestForm && (
+      </Routes>
+
+      {/* --- MODALS --- */}
+      {showRequestForm && (
          <RequestForm 
            onSubmit={handlePostRequest} 
            onCancel={() => setShowRequestForm(false)} 
@@ -449,8 +472,36 @@ const App: React.FC = () => {
          isVisible={toast.isVisible} 
          onClose={() => setToast({ ...toast, isVisible: false })} 
        />
-    </Layout>
+    </>
   );
+};
+
+// Small wrapper to handle extracting ID from params for Provider View
+const ProviderRouteWrapper = ({ providers, user, onBack, onSubmitReview, onRequestQuote, showToast }: any) => {
+    const params = useParams();
+    const pid = params.providerId;
+
+    const provider = providers.find((p: any) => p.id === pid) || {
+        id: pid, name: 'Provider', services: [], rating: 0, reviewCount: 0, badges: [], description: '', location: '', serviceTypes: [], isVerified: false, reviews: [], gallery: [], coverImage: '', profileImage: '', tagline: ''
+    };
+
+    return (
+        <ProviderProfileView 
+             provider={provider}
+             currentUser={user}
+             onBack={onBack}
+             onSubmitReview={onSubmitReview}
+             onRequestQuote={() => {
+                 if(!user) {
+                    // Logic handled in parent
+                    onRequestQuote();
+                 } else {
+                    onRequestQuote();
+                 }
+             }}
+             showToast={showToast}
+        />
+    );
 };
 
 export default App;

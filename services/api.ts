@@ -1,7 +1,7 @@
 import { db, auth, storage } from './firebase';
 import { 
   collection, getDocs, doc, setDoc, getDoc, updateDoc, deleteDoc, 
-  query, where, orderBy, limit, addDoc, Timestamp, writeBatch, arrayUnion, arrayRemove 
+  query, where, orderBy, limit, addDoc, Timestamp, writeBatch, arrayUnion, arrayRemove, increment 
 } from 'firebase/firestore';
 import { 
   signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, 
@@ -136,9 +136,23 @@ export const api = {
   },
 
   deleteUser: async (userId: string): Promise<void> => {
-    // Note: This only deletes Firestore data. Deleting Auth user requires Cloud Functions or Admin SDK.
-    await deleteDoc(doc(db, "users", userId));
-    await deleteDoc(doc(db, "providers", userId));
+    // FIX: Deleting Auth user requires Admin SDK, but we will cleanup Firestore data to prevent orphans
+    const batch = writeBatch(db);
+
+    // 1. Delete User Profile
+    batch.delete(doc(db, "users", userId));
+
+    // 2. Delete Provider Profile (if exists)
+    batch.delete(doc(db, "providers", userId));
+
+    // 3. Delete Requests made by User
+    const reqQ = query(collection(db, "requests"), where("userId", "==", userId));
+    const reqSnap = await getDocs(reqQ);
+    reqSnap.docs.forEach((doc) => {
+        batch.delete(doc.ref);
+    });
+
+    await batch.commit();
   },
 
   getAllUsers: async (): Promise<User[]> => {
@@ -361,89 +375,88 @@ export const api = {
       }
   },
 
-  // --- MESSAGES ---
+  // --- MESSAGES (Optimized with Conversations) ---
 
   getConversations: async (userId: string): Promise<Conversation[]> => {
-    // This is a simplified fetch. Real implementation would require a dedicated collection for chats.
-    // We will query unique senders/recipients from messages collection for demo.
-    const sentQ = query(collection(db, "messages"), where("senderId", "==", userId));
-    const recQ = query(collection(db, "messages"), where("recipientId", "==", userId));
+    // Optimization: Fetch from dedicated 'conversations' collection
+    const q = query(
+        collection(db, "conversations"), 
+        where("participants", "array-contains", userId)
+    );
+    const snapshot = await getDocs(q);
     
-    const [sentSnap, recSnap] = await Promise.all([getDocs(sentQ), getDocs(recQ)]);
-    const messages = [...sentSnap.docs, ...recSnap.docs].map(d => d.data() as DirectMessage);
-    
-    // Group by other user
-    const map = new Map<string, Conversation>();
-    
-    messages.sort((a,b) => a.timestamp - b.timestamp);
-    
-    messages.forEach(m => {
-        const isMe = m.senderId === userId;
-        const otherId = isMe ? m.recipientId : m.senderId;
-        // In a real app, use user cache or fetch it
-        const conv = map.get(otherId) || { 
-            otherUserId: otherId, 
-            otherUserName: 'User', // Would need fetch
-            lastMessage: '',
-            timestamp: 0,
-            unreadCount: 0
-        };
-        conv.lastMessage = m.content;
-        conv.timestamp = m.timestamp;
-        if (!isMe && !m.read) conv.unreadCount++;
-        map.set(otherId, conv);
-    });
-    
-    // Fetch names for conversations
-    const convos = Array.from(map.values());
-    for (const c of convos) {
-        const u = await getDoc(doc(db, "users", c.otherUserId));
-        if (u.exists()) c.otherUserName = u.data().name;
-    }
-    
+    const convos = await Promise.all(snapshot.docs.map(async (d) => {
+        const data = d.data();
+        const otherUserId = data.participants.find((p: string) => p !== userId) || 'unknown';
+        const unreadKey = `unreadCount_${userId}`;
+        
+        let otherUserName = 'User';
+        // Fetch name (could be cached in real app)
+        const uSnap = await getDoc(doc(db, "users", otherUserId));
+        if (uSnap.exists()) otherUserName = uSnap.data().name;
+
+        return {
+            otherUserId,
+            otherUserName,
+            lastMessage: data.lastMessage,
+            timestamp: data.timestamp,
+            unreadCount: data[unreadKey] || 0
+        } as Conversation;
+    }));
+
     return convos.sort((a, b) => b.timestamp - a.timestamp);
   },
 
   getMessages: async (userId: string, otherId: string): Promise<DirectMessage[]> => {
-      // Simplistic query: (sender==A && recipient==B) OR (sender==B && recipient==A)
-      // Firestore doesn't support OR queries natively in this way easily without composite indexes or multiple queries.
+      // Direct message fetch
       const q1 = query(collection(db, "messages"), where("senderId", "==", userId), where("recipientId", "==", otherId));
       const q2 = query(collection(db, "messages"), where("senderId", "==", otherId), where("recipientId", "==", userId));
       
       const [s1, s2] = await Promise.all([getDocs(q1), getDocs(q2)]);
       const allMsgs = [...s1.docs, ...s2.docs].map(d => ({id: d.id, ...d.data()} as DirectMessage));
       
-      // Mark as read
-      const batch = writeBatch(db);
-      s2.docs.forEach(d => {
-          if (!d.data().read) batch.update(d.ref, { read: true });
-      });
-      await batch.commit();
+      // Reset unread count for current user in conversation
+      const sortedIds = [userId, otherId].sort().join("_");
+      const convRef = doc(db, "conversations", sortedIds);
+      // We do a non-blocking update to clear unread
+      updateDoc(convRef, { [`unreadCount_${userId}`]: 0 }).catch(() => {});
 
       return allMsgs.sort((a, b) => a.timestamp - b.timestamp);
   },
 
   sendMessage: async (senderId: string, recipientId: string, content: string): Promise<void> => {
+      const timestamp = Date.now();
+      
+      // 1. Add to Messages Collection
       const msg: Omit<DirectMessage, 'id'> = {
           senderId,
           recipientId,
           content,
-          timestamp: Date.now(),
+          timestamp,
           read: false
       };
       await addDoc(collection(db, "messages"), msg);
+
+      // 2. Update/Create Conversation Document
+      const sortedIds = [senderId, recipientId].sort().join("_");
+      const convRef = doc(db, "conversations", sortedIds);
+      
+      await setDoc(convRef, {
+          participants: [senderId, recipientId],
+          lastMessage: content,
+          timestamp: timestamp,
+          [`unreadCount_${recipientId}`]: increment(1)
+      }, { merge: true });
   },
 
   // --- NOTIFICATIONS ---
 
   getNotifications: async (userId: string): Promise<Notification[]> => {
-    // UPDATED: Removed orderBy from query to avoid missing composite index error.
-    // We now fetch by user and sort in memory.
+    // Client-side sort to avoid composite index requirement
     const q = query(collection(db, "notifications"), where("userId", "==", userId));
     const snapshot = await getDocs(q);
     const notifs = snapshot.docs.map(d => ({ id: d.id, ...(d.data() as any) } as Notification));
     
-    // Client-side sort descending by timestamp and limit to 20
     return notifs.sort((a, b) => b.timestamp - a.timestamp).slice(0, 20);
   },
 
@@ -452,8 +465,6 @@ export const api = {
   },
 
   markAllNotificationsAsRead: async (userId: string): Promise<void> => {
-    // UPDATED: Removed where("read", "==", false) from query to avoid potential index requirement 
-    // for compound query (userId + read). We fetch all for user and filter in JS.
     const q = query(collection(db, "notifications"), where("userId", "==", userId));
     const snapshot = await getDocs(q);
     
@@ -473,11 +484,8 @@ export const api = {
   },
 
   broadcastNotification: async (title: string, message: string): Promise<void> => {
-      // 1. Log the action
       await api.logAction("system", "BROADCAST", `Sent: ${title}`, "ADMIN", "info");
       
-      // 2. Fetch all users to create individual notifications
-      // Note: In production, this loop should be handled by a Cloud Function to scale.
       const usersSnap = await getDocs(collection(db, "users"));
       const batch = writeBatch(db);
       
@@ -496,10 +504,6 @@ export const api = {
           };
           batch.set(newNotifRef, notification);
           operationCount++;
-          
-          // Firestore batches are limited to 500 operations.
-          // For this frontend-only implementation, we assume < 500 users for now.
-          // A real implementation would chunk this.
       });
 
       if (operationCount > 0) {
@@ -554,7 +558,6 @@ export const api = {
   // --- FILES ---
 
   uploadFile: async (file: File, folder = 'uploads'): Promise<string> => {
-     // Create a unique path with optional folder support
      const storageRef = ref(storage, `${folder}/${Date.now()}_${file.name}`);
      await uploadBytes(storageRef, file);
      return await getDownloadURL(storageRef);
@@ -563,16 +566,17 @@ export const api = {
   // --- HELPERS ---
 
   matchProviderToRequest: (provider: ProviderProfile, request: ServiceRequest): boolean => {
-      // 1. Check if provider supports the category
-      const hasCategory = provider.serviceTypes?.includes(request.category);
+      // FIX: Case-insensitive matching logic
+      const reqCategory = request.category.toLowerCase();
+      const hasCategory = provider.serviceTypes?.some(t => t.toLowerCase() === reqCategory);
+      
       if (!hasCategory) return false;
       
-      // 2. Check location proximity (string match for now)
+      // Simple location check (if strings overlap)
       if (request.locality && provider.location) {
-         // Simple check: if provider location string is part of request locality or vice versa
-         // In a real app, use Geo queries.
-         // For now, if provider is in 'Dubai' generally, we might allow it unless request is very specific
-         return true;
+         // This is weak matching, but good for MVP.
+         // If provider says "Dubai", they match everything in Dubai potentially.
+         return true; 
       }
       
       return true;
@@ -580,7 +584,6 @@ export const api = {
 
   shouldNotifyToRefineCriteria: (req: ServiceRequest): boolean => {
       const hoursSincePost = (Date.now() - new Date(req.createdAt).getTime()) / (1000 * 60 * 60);
-      // Notify if older than 24 hours and no quotes
       return hoursSincePost > 24 && req.quotes.length === 0;
   }
 };
