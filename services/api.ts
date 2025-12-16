@@ -228,23 +228,29 @@ export const api = {
 
   // --- REQUESTS ---
 
-  getRequests: async (user: User): Promise<ServiceRequest[]> => {
+  getRequests: async (user: User, allProviders: ProviderProfile[]): Promise<ServiceRequest[]> => {
     let q;
-    // NOTE: Client-side filtering/sorting is used here to avoid creating multiple composite indexes
-    // for this demo. In a high-scale production app, specific indexes should be deployed.
     if (user.role === UserRole.USER) {
-      // Just filter by user, sort client side to avoid index (userId ASC, createdAt DESC) if missing
-      q = query(collection(db, "requests"), where("userId", "==", user.id));
+        q = query(collection(db, "requests"), where("userId", "==", user.id));
     } else {
-      // Admins and Providers see all
-      q = query(collection(db, "requests"));
+        q = query(collection(db, "requests"));
     }
     const snapshot = await getDocs(q);
-    const reqs = snapshot.docs.map(d => ({ id: d.id, ...(d.data() as any) } as ServiceRequest));
-    
-    // Sort descending by date
+    let reqs = snapshot.docs.map(d => ({ id: d.id, ...(d.data() as any) } as ServiceRequest));
+
+    // If the user is a provider, filter requests to match their services
+    if (user.role === UserRole.PROVIDER) {
+        const provider = allProviders.find(p => p.id === user.id);
+        if (provider && provider.serviceTypes) {
+            reqs = reqs.filter(req => 
+                provider.serviceTypes.some(st => st.toLowerCase() === req.category.toLowerCase())
+            );
+        }
+    }
+
     return reqs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  },
+},
+
 
   createRequest: async (data: any): Promise<void> => {
     const req: Omit<ServiceRequest, 'id'> = {
@@ -265,6 +271,12 @@ export const api = {
   // --- QUOTES ---
 
   submitQuote: async (requestId: string, provider: ProviderProfile, quoteData: any): Promise<void> => {
+    // Security: Only authenticated providers can submit.
+    const currentUser = await api.getCurrentUser();
+    if (!currentUser || currentUser.role !== UserRole.PROVIDER || currentUser.id !== provider.id) {
+        throw new Error("Unauthorized: You must be a logged-in provider to submit a quote.");
+    }
+
     const quote: Quote = {
       id: `quote_${Date.now()}`,
       providerId: provider.id,

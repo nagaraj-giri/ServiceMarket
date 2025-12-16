@@ -157,8 +157,9 @@ const App: React.FC = () => {
   };
 
   const handlePostRequest = async (data: any) => {
+    if (!user) return; // <-- Add this security check
     try {
-      await api.createRequest({ ...data, userId: user?.id });
+      await api.createRequest({ ...data, userId: user.id }); // <-- Use real user ID
       showToastMessage('Request posted successfully!', 'success');
       setShowRequestForm(false);
       refreshData();
@@ -362,21 +363,21 @@ const App: React.FC = () => {
         <Route path="/profile-settings" element={
           <RequireAuth user={user}>
             <Layout user={user} onLogout={handleLogout} siteSettings={siteSettings}>
-               <ProfileSettings 
-                  role={user!.role}
-                  initialData={user!.role === UserRole.PROVIDER ? { ...providers.find(p => p.id === user!.id), email: user!.email } : user}
+               {user && <ProfileSettings 
+                  role={user.role}
+                  initialData={user.role === UserRole.PROVIDER ? { ...providers.find(p => p.id === user.id), email: user.email } : user}
                   onSave={async (data) => {
-                     if (user!.role === UserRole.PROVIDER) await api.updateProvider(user!.id, data);
-                     else await api.updateUser({ ...user!, ...data });
+                     if (user.role === UserRole.PROVIDER) await api.updateProvider(user.id, data);
+                     else await api.updateUser({ ...user, ...data });
                      showToastMessage('Profile updated successfully', 'success');
                      refreshData();
                      navigate('/dashboard');
                   }}
                   onCancel={() => navigate('/dashboard')}
                   onPreview={() => {
-                     if (user!.role === UserRole.PROVIDER) navigate(`/provider/${user!.id}`);
+                     if (user.role === UserRole.PROVIDER) navigate(`/provider/${user.id}`);
                   }}
-               />
+               />}
             </Layout>
           </RequireAuth>
         } />
