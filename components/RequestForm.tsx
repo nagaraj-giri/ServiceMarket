@@ -1,5 +1,5 @@
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ServiceRequest, Coordinates, ServiceType, ServiceCategory } from '../types';
 import { REAL_DUBAI_LOCATIONS } from '../constants';
 import { getPlaceSuggestions, PlaceSuggestion } from '../services/geminiService';
@@ -26,11 +26,13 @@ const RequestForm: React.FC<RequestFormProps> = ({ onSubmit, onCancel, initialCa
   const [showCategorySuggestions, setShowCategorySuggestions] = useState(false);
   const categoryWrapperRef = useRef<HTMLDivElement>(null);
 
+
   // Locality Autocomplete State
   const [filteredLocalities, setFilteredLocalities] = useState<PlaceSuggestion[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
+
 
   // Load Service Types on Mount if not provided prop
   useEffect(() => {

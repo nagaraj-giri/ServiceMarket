@@ -643,7 +643,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ requests, providers, us
     <div className="space-y-6">
       <div className="flex justify-between items-center">
          <div>
-            <h2 className="text-xl font-bold text-gray-900">Requests & Leads</h2>
+            <h2 className="text-xl font-bold text-gray-900">Leads & Requests</h2>
             <p className="text-sm text-gray-500">Monitor marketplace activity.</p>
          </div>
       </div>

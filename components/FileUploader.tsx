@@ -20,6 +20,7 @@ const FileUploader: React.FC<FileUploaderProps> = ({
   const [isUploading, setIsUploading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
   
   // Use a fallback image if current is empty
   const displayImage = currentImageUrl || 'https://via.placeholder.com/150?text=Upload';

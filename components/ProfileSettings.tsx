@@ -47,12 +47,14 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role, initialData, on
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
   const locationWrapperRef = useRef<HTMLDivElement>(null);
+
   
   // Gallery Upload State
-  const galleryInputRef = useRef<HTMLInputElement>(null);
+
   const [isGalleryUploading, setIsGalleryUploading] = useState(false);
-  
+  const galleryInputRef = useRef<HTMLInputElement>(null);
   const prevDataRef = useRef<string>('');
+
 
   useEffect(() => {
     api.getServiceTypes().then(setAvailableServiceTypes);

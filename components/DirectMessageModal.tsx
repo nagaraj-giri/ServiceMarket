@@ -17,8 +17,9 @@ const DirectMessageModal: React.FC<DirectMessageModalProps> = ({ recipientName, 
   const [messages, setMessages] = useState<DirectMessage[]>([]);
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const pollingRef = useRef<any>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
 
   const fetchMessages = async (isPolling = false) => {
     if (!currentUser) return;

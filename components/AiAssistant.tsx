@@ -1,5 +1,5 @@
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { getDubaiInsights } from '../services/geminiService';
 import { ChatMessage, User } from '../types';
 import { api } from '../services/api';
@@ -21,6 +21,7 @@ const AiAssistant: React.FC<AiAssistantProps> = ({ onClose, currentUser }) => {
     }
   ]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });

@@ -157,9 +157,8 @@ const App: React.FC = () => {
   };
 
   const handlePostRequest = async (data: any) => {
-    if (!user) return; // <-- Add this security check
     try {
-      await api.createRequest({ ...data, userId: user.id }); // <-- Use real user ID
+      await api.createRequest({ ...data, userId: user?.id });
       showToastMessage('Request posted successfully!', 'success');
       setShowRequestForm(false);
       refreshData();
