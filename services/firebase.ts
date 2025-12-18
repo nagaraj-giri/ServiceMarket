@@ -1,8 +1,7 @@
-
-import { initializeApp, getApps, getApp } from "firebase/app";
-import { getAuth } from "firebase/auth";
-import { getFirestore, initializeFirestore } from "firebase/firestore";
-import { getStorage } from "firebase/storage";
+import { initializeApp, getApps, getApp, FirebaseApp } from "firebase/app";
+import { getAuth, Auth } from "firebase/auth";
+import { getFirestore, Firestore } from "firebase/firestore";
+import { getStorage, FirebaseStorage } from "firebase/storage";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBWjFgzcioU6WN3xHsee82Ud-YyuPE93As",
@@ -14,22 +13,10 @@ const firebaseConfig = {
   measurementId: "G-4FBVJ5JCJV"
 };
 
-// Initialize Firebase (Singleton pattern)
-const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
+// Initialize Firebase
+const app: FirebaseApp = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
+const auth: Auth = getAuth(app);
+const db: Firestore = getFirestore(app);
+const storage: FirebaseStorage = getStorage(app);
 
-export const auth = getAuth(app);
-
-// Initialize Firestore with experimentalForceLongPolling to fix "Could not reach Cloud Firestore backend" errors.
-// This forces the client to use long-polling instead of WebSockets, which avoids timeout issues in some environments.
-let dbInstance;
-try {
-  dbInstance = initializeFirestore(app, {
-    experimentalForceLongPolling: true,
-  });
-} catch (e) {
-  // If Firestore was already initialized (e.g. during hot module replacement), fall back to the existing instance.
-  dbInstance = getFirestore(app);
-}
-
-export const db = dbInstance;
-export const storage = getStorage(app);
+export { app, auth, db, storage };

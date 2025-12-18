@@ -29,30 +29,35 @@
       body { font-family: 'Inter', sans-serif; background-color: #F8FAFC; }
       .hide-scrollbar::-webkit-scrollbar { display: none; }
       .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+      @keyframes shimmer {
+        0% { transform: translateX(-100%); }
+        100% { transform: translateX(100%); }
+      }
     </style>
-  <script type="importmap">
+    <script type="importmap">
 {
   "imports": {
     "react": "https://esm.sh/react@18.3.1",
-    "react/jsx-runtime": "https://esm.sh/react@18.3.1/jsx-runtime",
     "react-dom": "https://esm.sh/react-dom@18.3.1",
     "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
-    "react-router-dom": "https://esm.sh/react-router-dom@6.22.3?external=react,react-dom",
-    "recharts": "https://esm.sh/recharts@2.12.7?external=react,react-dom",
+    "react/jsx-runtime": "https://esm.sh/react@18.3.1/jsx-runtime",
+    "react-router-dom": "https://esm.sh/react-router-dom@6.22.3?deps=react@18.3.1,react-dom@18.3.1",
+    "recharts": "https://esm.sh/recharts@2.12.7?deps=react@18.3.1,react-dom@18.3.1",
+    "lucide-react": "https://esm.sh/lucide-react@0.378.0?deps=react@18.3.1",
     "@google/genai": "https://esm.sh/@google/genai@0.12.0",
     "firebase/app": "https://esm.sh/firebase@10.13.1/app",
-    "firebase/auth": "https://esm.sh/firebase@10.13.1/auth?deps=firebase@10.13.1",
-    "firebase/firestore": "https://esm.sh/firebase@10.13.1/firestore?deps=firebase@10.13.1",
-    "firebase/storage": "https://esm.sh/firebase@10.13.1/storage?deps=firebase@10.13.1",
-    "vite": "https://esm.sh/vite@5.2.0",
-    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@4.2.1",
+    "firebase/auth": "https://esm.sh/firebase@10.13.1/auth?deps=firebase@10.13.1/app",
+    "firebase/firestore": "https://esm.sh/firebase@10.13.1/firestore?deps=firebase@10.13.1/app",
+    "firebase/storage": "https://esm.sh/firebase@10.13.1/storage?deps=firebase@10.13.1/app",
     "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
     "react/": "https://esm.sh/react@^19.2.3/",
-    "firebase/": "https://esm.sh/firebase@^12.6.0/"
+    "vite": "https://esm.sh/vite@^7.3.0",
+    "firebase/": "https://esm.sh/firebase@^12.7.0/",
+    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2"
   }
 }
 </script>
-</head>
+  </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/index.tsx"></script>

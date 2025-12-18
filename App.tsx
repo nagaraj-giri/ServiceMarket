@@ -21,7 +21,7 @@ import QuoteDetailsModal from './components/QuoteDetailsModal';
 import TrashPage from './components/TrashPage';
 
 // Helper for Route Protection
-const RequireAuth = ({ user, children }: { user: User | null; children: React.ReactNode }) => {
+const RequireAuth = ({ user, children }: React.PropsWithChildren<{ user: User | null }>) => {
   if (!user) return <Navigate to="/login" replace />;
   if (!user.emailVerified) return <Navigate to="/verify-email" replace />;
   return <>{children}</>;
